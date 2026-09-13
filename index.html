@@ -1,0 +1,933 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#040609">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Hossam ERP - نظام إدارة وتوزيع مخزون السجاير بالقروصة</title>
+  <meta name="description" content="نظام ERP متكامل لإدارة مخزون السجاير بالقروصة، نقاط البيع، حسابات العملاء، عهد المناديب، وتقارير الخزينة بالجنيه المصري">
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📦</text></svg>">
+</head>
+<body>
+
+<div class="app-container">
+
+  <!-- ==========================================
+       SIDEBAR NAVIGATION
+       ========================================== -->
+  <aside class="app-sidebar" id="app-sidebar">
+    <!-- Brand Header -->
+    <div class="sidebar-header">
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <div class="brand-logo-icon">H</div>
+        <div class="brand-info">
+          <h2>Hossam ERP <span class="brand-badge">جملة</span></h2>
+          <p>إدارة مخزون السجاير بالقروصة</p>
+        </div>
+      </div>
+      <button class="sidebar-close-btn" onclick="App.toggleSidebar(false)" title="إغلاق القائمة">✕</button>
+    </div>
+
+    <!-- Nav Links List -->
+    <nav class="sidebar-nav">
+      <a class="nav-link active" data-page="dashboard" id="nav-dashboard">
+        <span class="nav-icon">📊</span>
+        <span>لوحة التحكم والاحصائيات</span>
+      </a>
+
+      <a class="nav-link" data-page="pos" id="nav-pos">
+        <span class="nav-icon">⚡</span>
+        <span>نقطة البيع (POS)</span>
+      </a>
+
+      <a class="nav-link" data-page="inventory" id="nav-inventory">
+        <span class="nav-icon">📦</span>
+        <span>المخزون وتعديل الأسعار</span>
+      </a>
+
+      <a class="nav-link" data-page="customers" id="nav-customers">
+        <span class="nav-icon">👥</span>
+        <span>حسابات العملاء والديون</span>
+      </a>
+
+      <a class="nav-link" data-page="reports" id="nav-reports">
+        <span class="nav-icon">📑</span>
+        <span>سجل الفواتير والتقارير</span>
+      </a>
+
+      <a class="nav-link" data-page="notifications" id="nav-notifications">
+        <span class="nav-icon">🔔</span>
+        <span>مركز الإشعارات</span>
+        <span class="nav-badge" id="nav-notif-badge" style="display: none;">0</span>
+      </a>
+
+      <a class="nav-link" data-page="settings" id="nav-settings">
+        <span class="nav-icon">⚙️</span>
+        <span>الإعدادات العامة</span>
+      </a>
+    </nav>
+
+    <!-- Sidebar Bottom Live Counters -->
+    <div class="sidebar-footer-stats">
+      <div class="quick-stat-box">
+        <span class="quick-stat-title">
+          <span>📦</span> عدد الأصناف:
+        </span>
+        <span class="quick-stat-value" id="sidebar-total-items">0</span>
+      </div>
+
+      <div class="quick-stat-box">
+        <span class="quick-stat-title">
+          <span>🏬</span> إجمالي القروصات بالمخزن:
+        </span>
+        <span class="quick-stat-value">
+          <span id="sidebar-total-cartons">0</span>
+          <span class="quick-stat-unit">قروصة</span>
+        </span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ==========================================
+       MAIN CONTENT WRAPPER
+       ========================================== -->
+  <div class="main-wrapper">
+
+    <!-- Top Header -->
+    <header class="app-header">
+      <!-- Mobile Toggle -->
+      <button class="icon-btn mobile-menu-toggle" id="mobile-toggle-btn" title="القائمة">
+        ☰
+      </button>
+
+      <!-- Global Search (Invoice # or Customer Name or Item) -->
+      <div class="header-search-wrap">
+        <span class="header-search-icon">🔍</span>
+        <input type="text" id="global-search-input" class="header-search-input" placeholder="بحث برقم الفاتورة أو اسم العميل أو كود الصنف..." autocomplete="off">
+        <div id="global-search-results" class="search-results-dropdown"></div>
+      </div>
+
+      <!-- Header Actions -->
+      <div class="header-actions">
+        <!-- Date / Clock -->
+        <span id="header-date-clock" style="font-size: 0.82rem; color: var(--text-secondary); display: none; font-weight: 600;"></span>
+
+        <!-- Quick Treasury Pill -->
+        <div class="quick-treasury-pill" onclick="App.navigateTo('reports')" title="الخزينة الحالية">
+          <span>🏦 الخزينة:</span>
+          <span id="header-treasury-val">0 ج.م</span>
+        </div>
+
+        <!-- Notifications Trigger -->
+        <button class="icon-btn" id="header-notif-btn" title="مركز الإشعارات">
+          🔔
+          <span class="badge-dot" id="header-notif-badge" style="display: none;"></span>
+        </button>
+
+        <!-- Current User Profile Pill -->
+        <div class="user-profile-btn" id="header-profile-btn">
+          <div class="user-avatar" id="header-user-avatar">ح</div>
+          <div class="user-details">
+            <div class="user-name" id="header-user-name">حسام</div>
+            <div class="user-role" id="header-user-role">المدير العام</div>
+          </div>
+          <span style="font-size: 0.75rem; color: var(--text-muted);">▾</span>
+        </div>
+
+        <!-- User Profile Dropdown Menu -->
+        <div class="profile-dropdown-menu" id="header-profile-dropdown">
+          <div class="dropdown-user-header">
+            <div class="dropdown-user-name" id="dropdown-fullname-val">حسام (المدير العام)</div>
+            <div class="dropdown-username-row">
+              <span class="dropdown-username-label">اسم المستخدم:</span>
+              <span class="dropdown-username-tag" id="dropdown-username-val">admin</span>
+            </div>
+          </div>
+          <div class="dropdown-divider"></div>
+          <div class="dropdown-item logout-item" onclick="App.logout()" style="cursor: pointer;">
+            <span>🚪</span> تسجيل الخروج
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Page Views Container -->
+    <main class="content-area">
+
+      <!-- ==========================================
+           PAGE 1: لوحة التحكم والإحصائيات
+           ========================================== -->
+      <section class="page-view active" id="page-dashboard">
+        <div class="page-title-banner">
+          <div class="page-title-group">
+            <h1>📊 لوحة التحكم والإحصائيات المالية</h1>
+            <p>متابعة المبيعات اليومية والشهرية، السيولة، تقييم المخزون وحركة الخزينة بالجنيه المصري</p>
+          </div>
+          <div class="page-title-actions">
+            <button class="btn btn-primary" onclick="App.openAddCapitalModal()">
+              <span>💰</span> إضافة / تغذية رأس المال
+            </button>
+            <button class="btn btn-success" onclick="App.navigateTo('pos')">
+              <span>⚡</span> فتح نقطة البيع
+            </button>
+          </div>
+        </div>
+
+        <!-- Dashboard Financial KPI Grid -->
+        <div class="kpi-grid">
+          <!-- 1. المبيعات اليومية -->
+          <div class="kpi-card">
+            <div class="kpi-card-header">
+              <span class="kpi-label">المبيعات اليومية (اليوم)</span>
+              <div class="kpi-icon-wrap gold">💵</div>
+            </div>
+            <div class="kpi-value-row">
+              <span class="kpi-amount" id="dash-daily-sales">0</span>
+              <span class="kpi-currency">ج.م</span>
+            </div>
+            <div class="kpi-subtext positive">
+              <span>↑ مبيعات فواتير اليوم الصادرة</span>
+            </div>
+          </div>
+
+          <!-- 2. المبيعات الشهرية -->
+          <div class="kpi-card">
+            <div class="kpi-card-header">
+              <span class="kpi-label">المبيعات الشهرية</span>
+              <div class="kpi-icon-wrap blue">📅</div>
+            </div>
+            <div class="kpi-value-row">
+              <span class="kpi-amount" id="dash-monthly-sales">0</span>
+              <span class="kpi-currency">ج.م</span>
+            </div>
+            <div class="kpi-subtext">
+              <span>إجمالي فواتير الشهر الجاري</span>
+            </div>
+          </div>
+
+          <!-- 3. صافي الربح -->
+          <div class="kpi-card">
+            <div class="kpi-card-header">
+              <span class="kpi-label">صافي الربح الإجمالي</span>
+              <div class="kpi-icon-wrap emerald">📈</div>
+            </div>
+            <div class="kpi-value-row">
+              <span class="kpi-amount" id="dash-net-profit" style="color: var(--emerald);">0</span>
+              <span class="kpi-currency">ج.م</span>
+            </div>
+            <div class="kpi-subtext positive">
+              <span>فارق سعر البيع والشراء بعد الخصومات</span>
+            </div>
+          </div>
+
+          <!-- 4. نقص الأصناف في المخزون -->
+          <div class="kpi-card" onclick="App.navigateTo('inventory')" style="cursor: pointer;">
+            <div class="kpi-card-header">
+              <span class="kpi-label">نقص الأصناف في المخزون</span>
+              <div class="kpi-icon-wrap rose">⚠️</div>
+            </div>
+            <div class="kpi-value-row">
+              <span class="kpi-amount" id="dash-low-stock" style="color: var(--rose);">0</span>
+              <span class="kpi-currency">أصناف</span>
+            </div>
+            <div class="kpi-subtext negative">
+              <span>وصلت إلى حد الطلب أو قاربت على النفاد</span>
+            </div>
+          </div>
+
+          <!-- 5. ديون العملاء -->
+          <div class="kpi-card" onclick="App.navigateTo('customers')" style="cursor: pointer;">
+            <div class="kpi-card-header">
+              <span class="kpi-label">ديون العملاء (مستحقات بالسوق)</span>
+              <div class="kpi-icon-wrap rose">👥</div>
+            </div>
+            <div class="kpi-value-row">
+              <span class="kpi-amount" id="dash-market-debts" style="color: var(--rose);">0</span>
+              <span class="kpi-currency">ج.م</span>
+            </div>
+            <div class="kpi-subtext">
+              <span>متبقي في ذمة عملاء الجملة والتجزئة</span>
+            </div>
+          </div>
+
+          <!-- 6. رأس المال -->
+          <div class="kpi-card">
+            <div class="kpi-card-header">
+              <span class="kpi-label">رأس المال المستثمر</span>
+              <div class="kpi-icon-wrap purple">💎</div>
+            </div>
+            <div class="kpi-value-row">
+              <span class="kpi-amount" id="dash-capital">0</span>
+              <span class="kpi-currency">ج.م</span>
+            </div>
+            <div class="kpi-subtext">
+              <span>رأس المال التشغيلي المودع</span>
+            </div>
+          </div>
+
+          <!-- 7. السيولة الشاملة -->
+          <div class="kpi-card">
+            <div class="kpi-card-header">
+              <span class="kpi-label">السيولة النقدية الشاملة</span>
+              <div class="kpi-icon-wrap cyan">🌊</div>
+            </div>
+            <div class="kpi-value-row">
+              <span class="kpi-amount" id="dash-liquidity" style="color: var(--cyan);">0</span>
+              <span class="kpi-currency">ج.م</span>
+            </div>
+            <div class="kpi-subtext">
+              <span>(نقدية الخزينة + نقدية المناديب المحصلة)</span>
+            </div>
+          </div>
+
+          <!-- 8. النقدية الحالية في الخزينة -->
+          <div class="kpi-card">
+            <div class="kpi-card-header">
+              <span class="kpi-label">النقدية الحالية في الخزينة</span>
+              <div class="kpi-icon-wrap emerald">🏦</div>
+            </div>
+            <div class="kpi-value-row">
+              <span class="kpi-amount" id="dash-treasury" style="color: var(--emerald);">0</span>
+              <span class="kpi-currency">ج.م</span>
+            </div>
+            <div class="kpi-subtext positive">
+              <span>نقدية حاضرة ومتاحة بالدرج والخزنة</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Dashboard Secondary Sections: Recent Invoices & Urgent Alerts -->
+        <div class="dashboard-grid-sections">
+          <!-- Recent Invoices Table -->
+          <div class="glass-panel">
+            <div class="panel-header">
+              <div class="panel-title">
+                <span>🧾</span> آخر فواتير المبيعات الصادرة
+              </div>
+              <button class="btn btn-secondary btn-sm" onclick="App.navigateTo('reports')">عرض كل الفواتير</button>
+            </div>
+            <div class="table-responsive">
+              <table class="modern-table">
+                <thead>
+                  <tr>
+                    <th>رقم الفاتورة</th>
+                    <th>العميل</th>
+                    <th>عدد الأصناف</th>
+                    <th>البائع</th>
+                    <th>الإجمالي</th>
+                    <th>الحالة</th>
+                    <th class="table-actions-header" style="min-width: 175px; text-align: center;">الإجراءات</th>
+                  </tr>
+                </thead>
+                <tbody id="dash-recent-invoices"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Low Stock Alert Panel -->
+          <div class="glass-panel">
+            <div class="panel-header">
+              <div class="panel-title">
+                <span>⚠️</span> نواقص قروصات السجاير
+              </div>
+              <button class="btn btn-secondary btn-sm" onclick="App.navigateTo('inventory')">إدارة المخزن</button>
+            </div>
+            <div id="dash-stock-alerts"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==========================================
+           PAGE 2: نقطة البيع (POS)
+           ========================================== -->
+      <section class="page-view" id="page-pos">
+        <div class="page-title-banner">
+          <div class="page-title-group">
+            <h1>⚡ نقطة البيع وإصدار الفواتير (POS)</h1>
+            <p>بيع قروصات السجاير، احتساب الخصومات، توليد الفاتورة كصورة، والمشاركة السريعة عبر واتساب</p>
+          </div>
+          
+          <!-- Sub Tab Switcher: نقطة البيع الرئيسية vs نقطة بيع المناديب -->
+          <div class="pos-tab-switch">
+            <button class="pos-tab-btn active" id="pos-tab-main" onclick="App.setPOSTab('main')">
+              🏬 نقطة البيع الرئيسية (المخزن)
+            </button>
+            <button class="pos-tab-btn" id="pos-tab-reps" onclick="App.setPOSTab('reps')">
+              🚚 نقطة بيع المناديب والعهدة
+            </button>
+          </div>
+        </div>
+
+        <!-- 2.A: Main POS View (Products Grid + Cart) -->
+        <div id="pos-main-container" class="pos-container">
+          <!-- Catalog Column -->
+          <div class="pos-catalog-wrap">
+            <!-- Toolbar -->
+            <div class="pos-toolbar">
+              <div class="pos-search-box" style="width: 100%;">
+                <input type="text" id="pos-search-input" class="form-control" placeholder="🔍 ابحث عن صنف سجاير بالاسم أو امسح الباركود..." oninput="App.renderPOSCatalog()">
+              </div>
+            </div>
+
+            <!-- Products Grid Cards -->
+            <div class="products-grid" id="pos-products-grid"></div>
+          </div>
+
+          <!-- Invoice / Cart Side Panel -->
+          <div class="pos-cart-panel">
+            <div class="cart-header">
+              <h3>
+                <span>🛒</span> فاتورة البيع
+              </h3>
+              <span class="invoice-no-pill">قروصة / ج.م</span>
+            </div>
+
+            <!-- Customer Selection -->
+            <div class="cart-customer-select">
+              <div class="customer-select-row">
+                <select id="cart-customer-select" class="custom-select" onchange="App.handleCartCustomerChange()">
+                  <option value="">اختر العميل...</option>
+                </select>
+                <button class="btn btn-secondary btn-sm" id="btn-pos-quick-add-cust" onclick="App.openQuickAddCustomerModal()" title="إضافة عميل سريع">+</button>
+              </div>
+            </div>
+
+            <!-- Cart Items List -->
+            <div class="cart-items-container" id="cart-items-list"></div>
+
+            <!-- Calculations Summary -->
+            <div class="cart-summary">
+              <div class="cart-calc-row">
+                <span>إجمالي الأصناف:</span>
+                <span id="cart-subtotal-val" class="cart-calc-val">0 ج.م</span>
+              </div>
+
+              <div class="cart-calc-row" id="cart-items-discount-row" style="display: none; color: var(--rose);">
+                <span>إجمالي خصم الأصناف:</span>
+                <span id="cart-items-discount-val" class="cart-calc-val">- 0 ج.م</span>
+              </div>
+
+              <div class="cart-calc-row">
+                <span>خصم الفاتورة (ج.م):</span>
+                <input type="number" id="cart-discount-input" class="cart-input-mini" value="0" min="0" placeholder="0" oninput="App.handleCartDiscountChange()">
+              </div>
+
+              <div class="cart-calc-row total-row">
+                <span>صافي الفاتورة:</span>
+                <span id="cart-grandtotal-val" class="cart-calc-val">0 ج.م</span>
+              </div>
+
+              <div class="cart-calc-row" style="align-items: center;">
+                <span>المبلغ المدفوع (كاش):</span>
+                <div style="display: flex; align-items: center; gap: 4px;">
+                  <input type="number" id="cart-paid-input" class="cart-input-mini" placeholder="المدفوع" min="0" oninput="App.handleCartPaidChange()" style="width: 75px;">
+                  <button type="button" class="btn btn-sm" onclick="App.setCartPaidFull()" title="سداد كامل المبلغ كاش" style="padding: 2px 6px; font-size: 0.72rem; background: rgba(16, 185, 129, 0.2); border: 1px solid var(--emerald); color: var(--emerald); border-radius: 4px; cursor: pointer;">كاش</button>
+                  <button type="button" class="btn btn-sm" onclick="App.setCartPaidZero()" title="آجل بالكامل (0 مدفوع)" style="padding: 2px 6px; font-size: 0.72rem; background: rgba(239, 68, 68, 0.2); border: 1px solid var(--rose); color: var(--rose); border-radius: 4px; cursor: pointer;">آجل</button>
+                </div>
+              </div>
+
+              <div class="cart-calc-row" id="cart-remaining-row">
+                <span>المتبقي (أجل):</span>
+                <span id="cart-remaining-val" class="cart-calc-val">0 ج.م</span>
+              </div>
+
+              <!-- Dynamic Customer Debt Impact in Cart -->
+              <div class="cart-calc-row" id="cart-customer-debt-prev-row" style="display: none; font-size: 0.8rem; color: var(--text-secondary); border-top: 1px dashed var(--border-subtle); padding-top: 6px; margin-top: 4px;">
+                <span>دين العميل السابق:</span>
+                <span id="cart-customer-debt-prev-val" class="cart-calc-val" style="color: var(--gold); font-weight: bold;">0 ج.م</span>
+              </div>
+              <div class="cart-calc-row" id="cart-customer-debt-new-row" style="display: none; font-size: 0.88rem; font-weight: 800; color: var(--rose); background: rgba(239, 68, 68, 0.1); padding: 6px 10px; border-radius: 6px; margin-top: 4px; border: 1px solid rgba(239, 68, 68, 0.3);">
+                <span>إجمالي الدين بعد الفاتورة:</span>
+                <span id="cart-customer-debt-new-val" class="cart-calc-val" style="color: var(--rose); font-weight: 900;">0 ج.م</span>
+              </div>
+            </div>
+
+            <!-- Cart Action Buttons -->
+            <div class="cart-actions-grid">
+              <!-- فتح الفاتورة وتوليد الصورة -->
+              <button class="btn btn-primary" onclick="App.openInvoicePreviewModal()">
+                <span>🧾</span> فتح الفاتورة (معاينة كصورة)
+              </button>
+
+              <div class="cart-sub-actions">
+                <button class="btn btn-danger" onclick="App.clearCart()">
+                  <span>✕</span> إلغاء الفاتورة
+                </button>
+                <button class="btn btn-success" onclick="App.openInvoicePreviewModal()">
+                  <span>💾</span> حفظ الفاتورة
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2.B: Reps View (مندوبين) -->
+        <div id="pos-reps-container" style="display: none;">
+          <div class="reps-grid" id="reps-cards-grid"></div>
+        </div>
+      </section>
+
+      <!-- ==========================================
+           PAGE 3: المخزون وتعديل الأسعار
+           ========================================== -->
+      <section class="page-view" id="page-inventory">
+        <div class="page-title-banner">
+          <div class="page-title-group">
+            <h1>📦 إدارة المخزون وتعديل الأسعار</h1>
+            <p>متابعة رصيد قروصات السجاير، باركود الأصناف، أسعار الشراء والبيع بالجملة، وتنبيهات حد الطلب</p>
+          </div>
+          <div class="page-title-actions">
+            <button class="btn btn-primary" onclick="App.openAddItemModal()">
+              <span>➕</span> إضافة صنف جديد
+            </button>
+            <button class="btn btn-secondary" onclick="App.openRestockPriceModal()">
+              <span>📦</span> توريد صنف وتحديث السعر
+            </button>
+          </div>
+        </div>
+
+        <!-- Inventory Filter Bar -->
+        <div class="glass-panel" style="margin-bottom: 20px; padding: 16px 20px;">
+          <div style="display: flex; gap: 14px; flex-wrap: wrap; align-items: center;">
+            <div style="flex: 1; min-width: 250px;">
+              <input type="text" id="inventory-search-input" class="form-control" placeholder="🔍 ابحث باسم الصنف أو الباركود..." oninput="App.renderInventory()">
+            </div>
+            <div style="width: 200px;">
+              <select id="inventory-filter-status" class="custom-select" onchange="App.renderInventory()">
+                <option value="all">جميع الحالات</option>
+                <option value="available">متوفر بالمخزن</option>
+                <option value="low">قرب ينفذ (حد الطلب)</option>
+                <option value="out">نفذ من المخزن</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Inventory Table -->
+        <div class="glass-panel" style="padding: 0; overflow: hidden;">
+          <div class="table-responsive">
+            <table class="modern-table">
+              <thead>
+                <tr>
+                  <th>الصنف</th>
+                  <th>الباركود</th>
+                  <th>المخزون (قروصة)</th>
+                  <th>سعر الشراء</th>
+                  <th>سعر البيع</th>
+                  <th>الحالة / حد الطلب</th>
+                  <th>إجراءات</th>
+                </tr>
+              </thead>
+              <tbody id="inventory-table-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==========================================
+           PAGE 4: حسابات العملاء والديون
+           ========================================== -->
+      <section class="page-view" id="page-customers">
+        <div class="page-title-banner">
+          <div class="page-title-group">
+            <h1>👥 حسابات العملاء والديون (المستحقات)</h1>
+            <p>سجل العملاء، متابعة المديونيات، تحصيل سندات القبض اللحظية، وكشوف الحسابات التفصيلية</p>
+          </div>
+          <div class="page-title-actions">
+            <button class="btn btn-primary" id="btn-add-customer-main" onclick="App.openAddCustomerModal()">
+              <span>➕</span> إضافة عميل جديد
+            </button>
+          </div>
+        </div>
+
+        <!-- Customer Search Bar -->
+        <div class="glass-panel" style="margin-bottom: 20px; padding: 16px 20px;">
+          <input type="text" id="customer-search-input" class="form-control" placeholder="🔍 ابحث برقم موبايل العميل أو اسمه أو المحل..." oninput="App.renderCustomers()">
+        </div>
+
+        <!-- Customers Grid Cards -->
+        <div class="customers-grid" id="customers-grid"></div>
+      </section>
+
+      <!-- ==========================================
+           PAGE 5: سجل الفواتير والتقارير
+           ========================================== -->
+      <section class="page-view" id="page-reports">
+        <div class="page-title-banner">
+          <div class="page-title-group">
+            <h1>📑 سجل الفواتير والتقارير المالية الشاملة</h1>
+            <p>التقييم الشامل للسيولة، بضاعة المخزن، أرباح الفواتير، وحركات التوريد بالخزينة</p>
+          </div>
+        </div>
+
+        <!-- The 8 Core Financial Metrics Cards -->
+        <div class="kpi-grid">
+          <!-- 1. الديون -->
+          <div class="kpi-card">
+            <div class="kpi-card-header">
+              <span class="kpi-label">الديون (مجموع المستحقات بالسوق)</span>
+              <div class="kpi-icon-wrap rose">⚠️</div>
+            </div>
+            <div class="kpi-value-row">
+              <span class="kpi-amount" id="rep-kpi-debts" style="color: var(--rose);">0</span>
+              <span class="kpi-currency">ج.م</span>
+            </div>
+            <div class="kpi-subtext negative">متبقي في ذمة عملاء الجملة</div>
+          </div>
+
+          <!-- 2. معايا بضاعة بكام (مخزن) -->
+          <div class="kpi-card">
+            <div class="kpi-card-header">
+              <span class="kpi-label">معايا بضاعة بكام (تقييم المخزن)</span>
+              <div class="kpi-icon-wrap gold">🏬</div>
+            </div>
+            <div class="kpi-value-row">
+              <span class="kpi-amount" id="rep-kpi-stock-val" style="color: var(--gold);">0</span>
+              <span class="kpi-currency">ج.م</span>
+            </div>
+            <div class="kpi-subtext">إجمالي قيمة القروصات بالمخزن بسعر التكلفة</div>
+          </div>
+
+          <!-- 3. السيولة النقدية الشاملة -->
+          <div class="kpi-card">
+            <div class="kpi-card-header">
+              <span class="kpi-label">السيولة النقدية الشاملة</span>
+              <div class="kpi-icon-wrap cyan">🌊</div>
+            </div>
+            <div class="kpi-value-row">
+              <span class="kpi-amount" id="rep-kpi-liquidity" style="color: var(--cyan);">0</span>
+              <span class="kpi-currency">ج.م</span>
+            </div>
+            <div class="kpi-subtext">(الخزينة + النقدية مع المناديب)</div>
+          </div>
+
+          <!-- 4. النقدية الحالية بالخزينة -->
+          <div class="kpi-card">
+            <div class="kpi-card-header">
+              <span class="kpi-label">النقدية الحالية بالخزينة</span>
+              <div class="kpi-icon-wrap emerald">🏦</div>
+            </div>
+            <div class="kpi-value-row">
+              <span class="kpi-amount" id="rep-kpi-treasury" style="color: var(--emerald);">0</span>
+              <span class="kpi-currency">ج.م</span>
+            </div>
+            <div class="kpi-subtext positive">حاضرة بالخزنة الرئيسية</div>
+          </div>
+
+          <!-- 5. إجمالي التوريدات للخزينة -->
+          <div class="kpi-card">
+            <div class="kpi-card-header">
+              <span class="kpi-label">إجمالي التوريدات للخزينة</span>
+              <div class="kpi-icon-wrap blue">📥</div>
+            </div>
+            <div class="kpi-value-row">
+              <span class="kpi-amount" id="rep-kpi-treasury-supplies">0</span>
+              <span class="kpi-currency">ج.م</span>
+            </div>
+            <div class="kpi-subtext">سندات قبض وتوريدات المودعين</div>
+          </div>
+
+          <!-- 6. إجمالي توريدات المناديب -->
+          <div class="kpi-card">
+            <div class="kpi-card-header">
+              <span class="kpi-label">إجمالي توريدات المناديب</span>
+              <div class="kpi-icon-wrap purple">🚚</div>
+            </div>
+            <div class="kpi-value-row">
+              <span class="kpi-amount" id="rep-kpi-reps-supplies">0</span>
+              <span class="kpi-currency">ج.م</span>
+            </div>
+            <div class="kpi-subtext">ما قام المناديب بتوريده للمخزن</div>
+          </div>
+
+          <!-- 7. إجمالي إيرادات المبيعات -->
+          <div class="kpi-card">
+            <div class="kpi-card-header">
+              <span class="kpi-label">إجمالي إيرادات المبيعات</span>
+              <div class="kpi-icon-wrap gold">📈</div>
+            </div>
+            <div class="kpi-value-row">
+              <span class="kpi-amount" id="rep-kpi-sales-revenue">0</span>
+              <span class="kpi-currency">ج.م</span>
+            </div>
+            <div class="kpi-subtext">إجمالي قيمة الفواتير الصادرة</div>
+          </div>
+
+          <!-- 8. صافي أرباح الفواتير -->
+          <div class="kpi-card">
+            <div class="kpi-card-header">
+              <span class="kpi-label">صافي أرباح الفواتير</span>
+              <div class="kpi-icon-wrap emerald">✨</div>
+            </div>
+            <div class="kpi-value-row">
+              <span class="kpi-amount" id="rep-kpi-net-profit" style="color: var(--emerald);">0</span>
+              <span class="kpi-currency">ج.م</span>
+            </div>
+            <div class="kpi-subtext positive">الأرباح الصافية المحققة</div>
+          </div>
+        </div>
+
+        <!-- Filter Bar -->
+        <div class="glass-panel" style="margin-bottom: 20px; padding: 16px 20px;">
+          <div style="display: flex; gap: 14px; flex-wrap: wrap; align-items: center;">
+            <div style="flex: 1; min-width: 250px;">
+              <input type="text" id="reports-search-input" class="form-control" placeholder="🔍 فلتر برقم الفاتورة أو اسم العميل..." oninput="App.filterReportsData()">
+            </div>
+            <div style="width: 220px;">
+              <select id="reports-period-filter" class="custom-select" onchange="App.filterReportsData()">
+                <option value="all">كل الفترات الزمنية</option>
+                <option value="today">المبيعات اليومية (اليوم)</option>
+                <option value="month">المبيعات الشهرية (هذا الشهر)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Reports Tabs Switcher: فواتير المبيعات vs سندات القبض -->
+        <div class="pos-tab-switch" style="margin-bottom: 20px;">
+          <button class="pos-tab-btn active" id="reports-tab-invoices" onclick="App.setReportsTab('invoices')">
+            <span>🧾</span> سجل فواتير المبيعات الصادرة (الإدارة والمناديب)
+            <span class="badge" id="reports-invoices-badge" style="background: rgba(0,0,0,0.3); padding: 2px 8px; border-radius: 12px; margin-right: 6px; font-size: 0.8rem;">0</span>
+          </button>
+          <button class="pos-tab-btn" id="reports-tab-receipts" onclick="App.setReportsTab('receipts')">
+            <span>🏦</span> سجل سندات القبض (الإدارة والمناديب)
+            <span class="badge" id="reports-receipts-badge" style="background: rgba(0,0,0,0.3); padding: 2px 8px; border-radius: 12px; margin-right: 6px; font-size: 0.8rem;">0</span>
+          </button>
+          <button class="pos-tab-btn" id="reports-tab-both" onclick="App.setReportsTab('both')">
+            <span>📑</span> عرض السجلين معاً
+          </button>
+        </div>
+
+        <!-- Invoices Log Table -->
+        <div class="glass-panel" id="reports-invoices-panel" style="margin-bottom: 24px;">
+          <div class="panel-header">
+            <div class="panel-title">
+              <span>🧾</span> سجل فواتير المبيعات الصادرة (الإدارة والمناديب)
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table class="modern-table">
+              <thead>
+                <tr>
+                  <th>رقم الفاتورة</th>
+                  <th>التاريخ والوقت</th>
+                  <th>العميل</th>
+                  <th>عدد الأصناف</th>
+                  <th>البائع / المنفذ</th>
+                  <th>صافي الفاتورة</th>
+                  <th>المدفوع كاش</th>
+                  <th>المتبقي (أجل)</th>
+                  <th>صافي الربح</th>
+                  <th class="table-actions-header" style="min-width: 175px; text-align: center;">الإجراءات</th>
+                </tr>
+              </thead>
+              <tbody id="reports-invoices-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Treasury & Receipts Log Table -->
+        <div class="glass-panel" id="reports-receipts-panel" style="display: none; margin-bottom: 24px;">
+          <div class="panel-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+            <div class="panel-title">
+              <span>🏦</span> سجل سندات القبض (الإدارة والمناديب)
+            </div>
+            <div>
+              <button class="btn btn-emerald btn-sm" onclick="App.openNewTreasuryReceiptModal()">
+                <span>➕</span> تسجيل سند قبض جديد
+              </button>
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table class="modern-table">
+              <thead>
+                <tr>
+                  <th>رقم السند</th>
+                  <th>التاريخ والوقت</th>
+                  <th>نوع التوريد</th>
+                  <th>المصدر / العميل / المندوب</th>
+                  <th>المستلم</th>
+                  <th>المبلغ المودع</th>
+                  <th>البيان والملاحظات</th>
+                  <th class="table-actions-header" style="min-width: 175px; text-align: center;">الإجراءات</th>
+                </tr>
+              </thead>
+              <tbody id="reports-treasury-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==========================================
+           PAGE 6: مركز الإشعارات
+           ========================================== -->
+      <section class="page-view" id="page-notifications">
+        <div class="page-title-banner">
+          <div class="page-title-group">
+            <h1>🔔 مركز الإشعارات وتنبيهات النظام</h1>
+            <p>تسجيل عمليات الدخول، الفواتير الصادرة من المناديب، سندات القبض، وتنبيهات نواقص المخزن</p>
+          </div>
+          <div class="page-title-actions">
+            <button class="btn btn-blue" onclick="App.printNotificationsAsImage()" title="طباعة وتصدير الإشعارات بصيغة صورة PNG">
+              <span>🖼️</span> طباعة الإشعارات
+            </button>
+            <button class="btn btn-secondary" onclick="App.markAllNotifsRead()">
+              <span>✓</span> تعليم الكل كمقروء
+            </button>
+            <button class="btn btn-danger" onclick="App.clearAllNotifs()">
+              <span>🗑️</span> مسح الإشعارات
+            </button>
+          </div>
+        </div>
+
+        <div class="glass-panel">
+          <div class="panel-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 10px;">
+            <div class="panel-title">
+              <span>📋</span> قائمة التنبيهات والإشعارات المسجلة
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="App.printNotificationsAsImage()" style="display: flex; align-items: center; gap: 6px;">
+              <span>🖼️</span> طباعة الإشعارات
+            </button>
+          </div>
+          <div class="notifications-list" id="notifications-full-list"></div>
+        </div>
+      </section>
+
+      <!-- ==========================================
+           PAGE 7: الإعدادات العامة
+           ========================================== -->
+      <section class="page-view" id="page-settings">
+        <div class="page-title-banner">
+          <div class="page-title-group">
+            <h1>⚙️ الإعدادات العامة وإدارة الحسابات</h1>
+            <p>إنشاء حسابات المناديب والمستخدمين، تعديل الصلاحيات، وضبط بيانات المؤسسة والفواتير</p>
+          </div>
+          <div class="page-title-actions">
+            <button class="btn btn-primary" onclick="App.openAddUserModal()">
+              <span>➕</span> إنشاء حساب مندوب / مستخدم جديد
+            </button>
+          </div>
+        </div>
+
+        <!-- Users & Reps Accounts Management -->
+        <div class="glass-panel" style="margin-bottom: 24px;">
+          <div class="panel-header">
+            <div class="panel-title">
+              <span>👥</span> الحسابات وصلاحيات المناديب والمستخدمين
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table class="modern-table">
+              <thead>
+                <tr>
+                  <th>الاسم والمستخدم</th>
+                  <th>الدور</th>
+                  <th>رقم الهاتف</th>
+                  <th>الصلاحيات الممنوحة</th>
+                  <th>الحالة</th>
+                  <th>إجراءات</th>
+                </tr>
+              </thead>
+              <tbody id="settings-users-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- General Business Settings -->
+        <div class="glass-panel" style="margin-bottom: 24px;">
+          <div class="panel-header">
+            <div class="panel-title">
+              <span>🏢</span> بيانات المؤسسة وسياسة الفواتير
+            </div>
+          </div>
+          <div class="modal-body" style="padding: 0 0 16px 0;">
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">اسم المؤسسة التجاري (يظهر أعلى الفاتورة)</label>
+                <input type="text" id="settings-business-name" class="form-control" placeholder="أدخل اسم المؤسسة أو النشاط التجاري...">
+              </div>
+              <div class="form-group">
+                <label class="form-label">رقم هاتف المؤسسة</label>
+                <input type="text" id="settings-phone" class="form-control" placeholder="01xxxxxxxxx">
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">العنوان التجاري والفرع الرئيسي</label>
+              <input type="text" id="settings-address" class="form-control" placeholder="أدخل عنوان المؤسسة أو الفرع الرئيسي...">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">نص تذييل الفاتورة (ملاحظات للعميل)</label>
+              <input type="text" id="settings-footer-text" class="form-control" placeholder="مثال: البضاعة المباعة لا ترد بعد 3 أيام / شكراً لتعاملكم معنا">
+            </div>
+
+            <button class="btn btn-primary" style="width: fit-content;" onclick="App.saveGeneralSettings()">
+              حفظ إعدادات المؤسسة
+            </button>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<!-- Mobile Sidebar Backdrop Overlay -->
+<div id="sidebar-overlay" class="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
+
+<!-- Modern Floating Mobile Bottom Navigation Bar -->
+<nav class="mobile-bottom-nav" id="mobile-bottom-nav">
+  <button class="mobile-nav-item active" data-page="dashboard" onclick="App.navigateTo('dashboard')" title="الرئيسية">
+    <span class="mobile-nav-icon">📊</span>
+    <span class="mobile-nav-text">الرئيسية</span>
+  </button>
+  <button class="mobile-nav-item" data-page="pos" onclick="App.navigateTo('pos')" title="نقطة البيع">
+    <span class="mobile-nav-icon">⚡</span>
+    <span class="mobile-nav-text">كاشير</span>
+  </button>
+  <button class="mobile-nav-item" data-page="inventory" onclick="App.navigateTo('inventory')" title="المخزون">
+    <span class="mobile-nav-icon">📦</span>
+    <span class="mobile-nav-text">المخزون</span>
+  </button>
+  <button class="mobile-nav-item" data-page="customers" onclick="App.navigateTo('customers')" title="العملاء">
+    <span class="mobile-nav-icon">👥</span>
+    <span class="mobile-nav-text">العملاء</span>
+  </button>
+  <button class="mobile-nav-item" data-page="reports" onclick="App.navigateTo('reports')" title="التقارير">
+    <span class="mobile-nav-icon">📑</span>
+    <span class="mobile-nav-text">التقارير</span>
+  </button>
+  <button class="mobile-nav-item" onclick="App.toggleSidebar(true)" title="المزيد من القوائم">
+    <span class="mobile-nav-icon">☰</span>
+    <span class="mobile-nav-text">المزيد</span>
+  </button>
+</nav>
+
+<!-- Modal Overlay & Container -->
+<div id="global-modal-overlay" class="modal-overlay">
+  <div id="global-modal-container" class="modal-content"></div>
+</div>
+
+<!-- Custom Confirm & Alert Modal Overlay -->
+<div id="custom-confirm-overlay" class="confirm-dialog-overlay">
+  <div id="custom-confirm-container" class="confirm-dialog-card"></div>
+</div>
+
+<!-- Toast notifications container -->
+<div id="toast-container" class="toast-container"></div>
+
+<!-- Firebase SDK Compat & Database Adapter -->
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+<script src="js/firebase-db.js"></script>
+
+<!-- App Scripts -->
+<script src="js/data.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
