@@ -229,15 +229,9 @@ const App = {
     // 6. Users Realtime Sync
     window.FDB.initRealtimeSync('users', (users) => {
       if (users && Array.isArray(users)) {
-        if (users.length === 0 && this.db.users && this.db.users.length > 0) {
-          // If Firestore is completely empty, push the default admin to Firestore
-          const admin = this.db.users[0];
-          window.FDB.addDocument('users', admin);
-        } else if (users.length > 0) {
-          this.db.users = users;
-          this.syncDB();
-          if (this.activePage === 'settings') this.renderSettings();
-        }
+        this.db.users = users;
+        this.syncDB();
+        if (this.activePage === 'settings') this.renderSettings();
       }
     });
 
@@ -7869,11 +7863,49 @@ const App = {
 
     if (submitBtn) {
       submitBtn.disabled = true;
-      submitBtn.innerHTML = `<span>⏳</span> جاري التحقق من الحساب...`;
+      submitBtn.innerHTML = `<span>⏳</span> جاري التحقق من الحساب عبر Firebase...`;
     }
 
     try {
-      // 1. Try local stored accounts
+      // 1. Direct Authentication via Firebase Auth
+      if (window.FDB) {
+        const fbRes = await window.FDB.login(username, password);
+        if (fbRes.success && fbRes.user) {
+          const authEmail = (fbRes.user.email || '').toLowerCase();
+          let userObj = (this.db.users || []).find(u => 
+            (u.email && u.email.toLowerCase() === authEmail) || 
+            (u.username && u.username.toLowerCase() === username.toLowerCase()) ||
+            u.id === fbRes.user.uid
+          );
+
+          const isRootAdmin = authEmail.includes('admin') || username.toLowerCase() === 'admin';
+
+          if (!userObj) {
+            userObj = {
+              id: fbRes.user.uid,
+              name: isRootAdmin ? 'حسام (المدير العام)' : (fbRes.user.displayName || username),
+              username: username,
+              email: fbRes.user.email,
+              role: isRootAdmin ? 'مدير النظام (أدمن)' : 'مستخدم',
+              status: 'active',
+              permissions: isRootAdmin ? ['كافة الصلاحيات'] : []
+            };
+            if (window.FDB.setDocument) {
+              window.FDB.setDocument('users', userObj.id, userObj).catch(() => {});
+            }
+          }
+
+          if (userObj.status && userObj.status !== 'active') {
+            this.showToast('هذا الحساب معطل، يرجى مراجعة إدارة النظام', 'error');
+            return;
+          }
+
+          this.loginAsUser(userObj);
+          return;
+        }
+      }
+
+      // 2. Validate against Firestore synced users
       const cleanUsername = username.toLowerCase();
       const foundUser = (this.db.users || []).find(u => {
         const uLogin = (u.username || '').toLowerCase();
@@ -7893,30 +7925,10 @@ const App = {
         return;
       }
 
-      // 2. Try Firebase Auth
-      if (window.FDB) {
-        const fbRes = await window.FDB.login(username, password);
-        if (fbRes.success && fbRes.user) {
-          let userObj = (this.db.users || []).find(u => 
-            (u.email && u.email.toLowerCase() === fbRes.user.email?.toLowerCase()) || 
-            (u.username && u.username.toLowerCase() === username.toLowerCase())
-          );
-          if (!userObj) {
-            userObj = {
-              id: fbRes.user.uid,
-              name: username,
-              username: username,
-              email: fbRes.user.email,
-              role: 'مدير النظام (أدمن)',
-              status: 'active'
-            };
-          }
-          this.loginAsUser(userObj);
-          return;
-        }
-      }
-
-      this.showToast('اسم المستخدم أو كلمة المرور غير صحيحة', 'error');
+      this.showToast('بيانات الدخول غير صحيحة، يرجى التحقق من اسم المستخدم وكلمة المرور', 'error');
+    } catch (err) {
+      console.error('Login error:', err);
+      this.showToast('حدث خطأ أثناء محاولة تسجيل الدخول', 'error');
     } finally {
       if (submitBtn) {
         submitBtn.disabled = false;

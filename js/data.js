@@ -20,31 +20,7 @@ try {
   }
 } catch (e) {}
 
-const defaultAdminUser = {
-  id: 'admin_root',
-  name: 'حسام (المدير العام)',
-  email: 'admin@hossam-erp.com',
-  username: 'admin',
-  password: '01095412229',
-  role: 'مدير النظام (أدمن)',
-  phone: '01095412229',
-  status: 'active',
-  permissions: [
-    'كافة الصلاحيات',
-    'الخزينة والمصروفات',
-    'الأسعار وسياسة البيع',
-    'المخزون وإدخال الشحنات',
-    'إدارة المستخدمين والإعدادات',
-    'التقارير والأرباح',
-    'نقطة بيع المندوب',
-    'مبيعات المخزن (كاشير)',
-    'سندات قبض وتحصيل',
-    'إدارة العملاء والديون',
-    'إدارة المناديب والعهد'
-  ]
-};
-
-// 100% Clean initial database with admin account configured
+// 100% Clean initial database - completely empty, loaded from cloud Firestore
 const defaultDatabase = {
   currentUser: null,
   items: [],
@@ -54,12 +30,12 @@ const defaultDatabase = {
   treasury: 0,
   treasuryLogs: [],
   notifications: [],
-  users: [defaultAdminUser],
+  users: [],
   settings: {
     systemName: 'Hossam ERP',
     businessName: '',
-    ownerName: 'حسام',
-    phone: '01095412229',
+    ownerName: '',
+    phone: '',
     address: '',
     currency: 'ج.م',
     receiptFooter: '',
@@ -90,7 +66,7 @@ class DBManager {
           invoices: Array.isArray(parsed.invoices) ? parsed.invoices : [],
           treasury: typeof parsed.treasury === 'number' ? parsed.treasury : 0,
           treasuryLogs: Array.isArray(parsed.treasuryLogs) ? parsed.treasuryLogs : [],
-          users: (Array.isArray(parsed.users) && parsed.users.length > 0) ? parsed.users : [defaultAdminUser],
+          users: Array.isArray(parsed.users) ? parsed.users : [],
           notifications: Array.isArray(parsed.notifications) ? parsed.notifications : []
         };
       }
