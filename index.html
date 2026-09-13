@@ -128,11 +128,11 @@
         </button>
 
         <!-- Current User Profile Pill -->
-        <div class="user-profile-btn" id="header-profile-btn">
-          <div class="user-avatar" id="header-user-avatar">ح</div>
+        <div class="user-profile-btn" id="header-profile-btn" onclick="if (!App.getCurrentUser()) App.openLoginModal(true);">
+          <div class="user-avatar" id="header-user-avatar">🔒</div>
           <div class="user-details">
-            <div class="user-name" id="header-user-name">حسام</div>
-            <div class="user-role" id="header-user-role">المدير العام</div>
+            <div class="user-name" id="header-user-name">تسجيل الدخول</div>
+            <div class="user-role" id="header-user-role">غير متصل</div>
           </div>
           <span style="font-size: 0.75rem; color: var(--text-muted);">▾</span>
         </div>
@@ -140,10 +140,10 @@
         <!-- User Profile Dropdown Menu -->
         <div class="profile-dropdown-menu" id="header-profile-dropdown">
           <div class="dropdown-user-header">
-            <div class="dropdown-user-name" id="dropdown-fullname-val">حسام (المدير العام)</div>
+            <div class="dropdown-user-name" id="dropdown-fullname-val">لم يتم تسجيل الدخول بعد</div>
             <div class="dropdown-username-row">
               <span class="dropdown-username-label">اسم المستخدم:</span>
-              <span class="dropdown-username-tag" id="dropdown-username-val">admin</span>
+              <span class="dropdown-username-tag" id="dropdown-username-val">---</span>
             </div>
           </div>
           <div class="dropdown-divider"></div>

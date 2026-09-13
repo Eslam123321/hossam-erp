@@ -22,13 +22,9 @@ const db = firebase.firestore();
 // Ensure authenticated session with persistent local storage
 auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(() => {});
 
-// Auto-authenticate with admin if no user is signed in
+// Listen for auth state changes without automatic credential bypass
 auth.onAuthStateChanged((user) => {
-  if (!user) {
-    auth.signInWithEmailAndPassword("admin@hossam-erp.com", "01095412229").catch((err) => {
-      console.warn("Auto sign-in:", err.message);
-    });
-  }
+  // Authentication status monitored; credentials must be provided manually
 });
 
 // Global Firebase Database Adapter (window.FDB)

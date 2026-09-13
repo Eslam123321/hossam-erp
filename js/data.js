@@ -38,7 +38,7 @@ const defaultAdminUser = {
 
 // 100% Clean initial database with admin account configured
 const defaultDatabase = {
-  currentUser: defaultAdminUser,
+  currentUser: null,
   items: [],
   customers: [],
   reps: [],
@@ -70,6 +70,7 @@ class DBManager {
         return {
           ...defaultDatabase,
           ...parsed,
+          currentUser: null, // Always require manual authentication on load/refresh
           capital: typeof parsed.capital === 'number' ? parsed.capital : 0,
           items: Array.isArray(parsed.items) ? parsed.items : [],
           customers: Array.isArray(parsed.customers) ? parsed.customers : [],

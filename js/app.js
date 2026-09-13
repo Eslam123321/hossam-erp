@@ -29,15 +29,33 @@ const App = {
     this.reconcilePastRepInvoicesStock();
     this.reconcileRepsStats();
     this.bindEvents();
+    this.setupClock();
+    this.startListeners();
+
+    if (!this.db || !this.db.currentUser) {
+      this.lockAppForLogin();
+      this.openLoginModal(true);
+    } else {
+      this.unlockAppAfterLogin();
+    }
+  },
+
+  lockAppForLogin() {
+    document.body.classList.add('app-auth-locked');
+    this.applyUserPermissionsUI();
+    this.updateHeaderProfile();
+    this.updateLiveSidebarStats();
+  },
+
+  unlockAppAfterLogin() {
+    document.body.classList.remove('app-auth-locked');
     this.applyUserPermissionsUI();
     this.updateHeaderProfile();
     this.updateLiveSidebarStats();
     if (!this.canAccessPage(this.activePage)) {
       this.activePage = this.getFirstAllowedPage();
     }
-    this.navigateTo(this.activePage);
-    this.setupClock();
-    this.startListeners();
+    this.navigateTo(this.activePage || 'dashboard');
   },
 
   _uiRefreshTimer: null,
@@ -254,8 +272,9 @@ const App = {
 
   // User & Permission Management Helpers
   getCurrentUser() {
-    let u = this.db.currentUser || (this.db.users && this.db.users[0]) || { name: 'حسام (المدير العام)', username: 'admin', role: 'مدير النظام (أدمن)' };
-    const isHossam = u.id === 'user_1' || (u.name && u.name.includes('حسام')) || u.username === 'admin' || u.username === 'hossam';
+    if (!this.db || !this.db.currentUser) return null;
+    let u = this.db.currentUser;
+    const isHossam = u.id === 'user_1' || u.id === 'admin_root' || (u.name && u.name.includes('حسام')) || u.username === 'admin' || u.username === 'hossam';
     if (isHossam) {
       u.role = 'مدير النظام (أدمن)';
       if (!u.permissions || !u.permissions.includes('كافة الصلاحيات')) {
@@ -279,13 +298,13 @@ const App = {
 
   isCurrentUserAdmin() {
     const user = this.getCurrentUser();
-    if (!user) return true;
+    if (!user) return false;
     const uName = (user.name || '').toLowerCase();
     const uRole = (user.role || '').toLowerCase();
     const uLogin = (user.username || '').toLowerCase();
 
     // 1. Hossam - The Owner & Main Account (Always full admin privileges)
-    if (user.id === 'user_1' || uName.includes('حسام') || uName.includes('hossam') || uLogin === 'admin' || uLogin === 'hossam' || uLogin === 'حسام') {
+    if (user.id === 'user_1' || user.id === 'admin_root' || uName.includes('حسام') || uName.includes('hossam') || uLogin === 'admin' || uLogin === 'hossam' || uLogin === 'حسام') {
       return true;
     }
     // 2. Admin / Manager / Owner roles
@@ -300,9 +319,9 @@ const App = {
   },
 
   isCurrentUserRep() {
-    if (this.isCurrentUserAdmin()) return false;
     const user = this.getCurrentUser();
     if (!user) return false;
+    if (this.isCurrentUserAdmin()) return false;
     return user.role === 'مندوب توزيع' || (this.db.reps || []).some(r => r.username === user.username || r.name === user.name);
   },
 
@@ -313,14 +332,16 @@ const App = {
   },
 
   hasPermission(permKeyOrLabel) {
-    if (this.isCurrentUserAdmin()) return true;
     const user = this.getCurrentUser();
     if (!user || !user.permissions) return false;
+    if (this.isCurrentUserAdmin()) return true;
     if (user.permissions.includes('كافة الصلاحيات') || user.permissions.includes('*')) return true;
     return user.permissions.some(p => p === permKeyOrLabel || p.toLowerCase() === permKeyOrLabel.toLowerCase());
   },
 
   canAccessPage(pageId) {
+    const user = this.getCurrentUser();
+    if (!user) return false;
     if (this.isCurrentUserAdmin()) return true;
     switch (pageId) {
       case 'pos':
@@ -351,6 +372,24 @@ const App = {
   },
 
   applyUserPermissionsUI() {
+    const user = this.getCurrentUser();
+    if (!user) {
+      this.activeRepForPOS = null;
+      this.currentCart.sellerType = 'غير مسجل';
+      this.currentCart.sellerId = null;
+      this.currentCart.sellerName = 'تسجيل الدخول';
+
+      const navIds = ['dashboard', 'pos', 'inventory', 'customers', 'reports', 'notifications', 'settings'];
+      navIds.forEach(id => {
+        const el = document.getElementById('nav-' + id);
+        if (el) el.style.display = 'none';
+      });
+      document.querySelectorAll('.mobile-bottom-nav .mobile-nav-item').forEach(btn => {
+        if (btn.getAttribute('data-page')) btn.style.display = 'none';
+      });
+      return;
+    }
+
     const isRep = this.isCurrentUserRep();
     const isAdmin = this.isCurrentUserAdmin();
     const rep = isRep ? this.getLinkedRep() : null;
@@ -359,7 +398,7 @@ const App = {
       this.activeRepForPOS = null;
       this.currentCart.sellerType = 'الإدارة (الرئيسية)';
       this.currentCart.sellerId = null;
-      this.currentCart.sellerName = this.getCurrentUser().name || 'حسام (المدير العام)';
+      this.currentCart.sellerName = user.name || 'حسام (المدير العام)';
     } else if (isRep && rep) {
       this.activeRepForPOS = rep;
       this.currentCart.sellerType = 'مندوب';
@@ -369,7 +408,7 @@ const App = {
       this.activeRepForPOS = null;
       this.currentCart.sellerType = 'مستخدم';
       this.currentCart.sellerId = null;
-      this.currentCart.sellerName = this.getCurrentUser().name;
+      this.currentCart.sellerName = user.name || 'مستخدم';
     }
 
     // 1. Sidebar desktop navigation items
@@ -527,17 +566,27 @@ const App = {
 
   updateHeaderProfile() {
     const user = this.getCurrentUser();
-    const isAdmin = this.isCurrentUserAdmin();
-    const isRep = this.isCurrentUserRep();
     const nameEl = document.getElementById('header-user-name');
     const roleEl = document.getElementById('header-user-role');
     const avatarEl = document.getElementById('header-user-avatar');
+    const dropdownFullname = document.getElementById('dropdown-fullname-val');
+    const dropdownUsername = document.getElementById('dropdown-username-val');
+
+    if (!user) {
+      if (nameEl) nameEl.textContent = 'تسجيل الدخول';
+      if (roleEl) roleEl.textContent = 'غير متصل';
+      if (avatarEl) avatarEl.textContent = '🔒';
+      if (dropdownFullname) dropdownFullname.textContent = 'لم يتم تسجيل الدخول بعد';
+      if (dropdownUsername) dropdownUsername.textContent = '---';
+      return;
+    }
+
+    const isAdmin = this.isCurrentUserAdmin();
+    const isRep = this.isCurrentUserRep();
     if (nameEl) nameEl.textContent = user.name;
     if (roleEl) roleEl.textContent = user.role;
     if (avatarEl) avatarEl.textContent = user.name ? user.name.charAt(0) : 'ح';
 
-    const dropdownFullname = document.getElementById('dropdown-fullname-val');
-    const dropdownUsername = document.getElementById('dropdown-username-val');
     if (dropdownFullname) {
       const permsSummary = isAdmin ? ' (كافة الصلاحيات)' : (isRep ? ' (صلاحيات مقيدة)' : '');
       dropdownFullname.textContent = `${user.name} - ${user.role}${permsSummary}`;
@@ -624,6 +673,10 @@ const App = {
   },
 
   navigateTo(pageId) {
+    if (!this.getCurrentUser()) {
+      this.openLoginModal(true);
+      return;
+    }
     if (!this.canAccessPage(pageId)) {
       this.showToast('عفواً، ليس لديك صلاحية للوصول إلى هذا القسم', 'error');
       const fallback = this.getFirstAllowedPage();
@@ -7743,100 +7796,133 @@ const App = {
   executeLogout() {
     this.closeConfirmModal();
     if (window.FDB) window.FDB.logout();
+    this.db.currentUser = null;
+    this.syncDB();
     this.showToast('تم تسجيل الخروج بنجاح 👋');
+    this.lockAppForLogin();
     setTimeout(() => {
-      this.openLoginModal();
-    }, 250);
+      this.openLoginModal(true);
+    }, 200);
   },
 
-  openLoginModal() {
+  openLoginModal(isMandatory = false) {
+    const isLocked = isMandatory || !this.getCurrentUser();
     const modalHtml = `
-      <div class="modal-header" style="justify-content: center; text-align: center; border-bottom: none; padding-bottom: 0;">
-        <div>
-          <div style="font-size: 2.2rem; margin-bottom: 6px;">🔐</div>
-          <h3 style="font-size: 1.3rem; justify-content: center;">تسجيل الدخول إلى Hossam ERP</h3>
-          <p style="font-size: 0.84rem; color: var(--text-muted); margin-top: 4px;">نظام إدارة وتوزيع مخزون السجاير بالجملة</p>
-        </div>
-      </div>
-      <div class="modal-body" style="gap: 16px; padding-top: 10px;">
-        <div class="form-group">
-          <label class="form-label">اسم المستخدم أو البريد الإلكتروني *</label>
-          <input type="text" id="login-input-username" class="form-control" placeholder="أدخل اسم المستخدم أو البريد الإلكتروني" onkeydown="if(event.key==='Enter') document.getElementById('login-input-password').focus()">
+      <div class="login-card-modal">
+        ${!isLocked ? `
+          <button type="button" class="login-modal-close-btn" onclick="App.closeModal()" title="إغلاق">✕</button>
+        ` : ''}
+        <div class="login-modal-brand">
+          <div class="login-brand-icon">H</div>
+          <h2 class="login-brand-title">Hossam ERP <span class="brand-badge">جملة</span></h2>
+          <p class="login-brand-sub">نظام إدارة وتوزيع مخزون السجاير بالقروصة</p>
         </div>
 
-        <div class="form-group">
-          <label class="form-label">كلمة المرور *</label>
-          <div class="password-input-group">
-            <input type="password" id="login-input-password" class="form-control" placeholder="أدخل كلمة المرور" onkeydown="if(event.key==='Enter') App.submitLogin()">
-            <button type="button" class="password-toggle-btn" onclick="App.togglePasswordVisibility('login-input-password', this)">
-              👁️ إظهار
-            </button>
+        <div class="login-status-pill">
+          <span class="status-dot-pulse"></span>
+          <span>يرجى إدخال بيانات حسابك لتسجيل الدخول</span>
+        </div>
+
+        <form class="login-form-body" onsubmit="event.preventDefault(); App.submitLogin();">
+          <div class="form-group">
+            <label class="form-label" for="login-input-username">اسم المستخدم أو البريد الإلكتروني *</label>
+            <div class="input-with-icon">
+              <span class="field-icon">👤</span>
+              <input type="text" id="login-input-username" class="form-control" placeholder="أدخل اسم المستخدم أو البريد" autocomplete="username" required>
+            </div>
           </div>
-        </div>
 
-        <button type="button" class="btn btn-primary" style="width: 100%; justify-content: center; padding: 12px; font-size: 1rem; font-weight: 800; margin-top: 6px;" onclick="App.submitLogin()">
-          دخول للنظام
-        </button>
+          <div class="form-group">
+            <label class="form-label" for="login-input-password">كلمة المرور *</label>
+            <div class="input-with-icon password-input-wrap">
+              <span class="field-icon">🔑</span>
+              <input type="password" id="login-input-password" class="form-control" placeholder="أدخل كلمة المرور" autocomplete="current-password" required>
+              <button type="button" class="password-toggle-btn" onclick="App.togglePasswordVisibility('login-input-password', this)">
+                👁️ إظهار
+              </button>
+            </div>
+          </div>
+
+          <button type="submit" class="btn btn-primary btn-login-submit" id="btn-login-submit">
+            <span>🔐</span> دخول للنظام
+          </button>
+        </form>
       </div>
     `;
 
-    this.openModal(modalHtml, '420px');
+    this.openModal(modalHtml, '440px', isLocked);
+    setTimeout(() => {
+      const userInp = document.getElementById('login-input-username');
+      if (userInp) userInp.focus();
+    }, 150);
   },
 
   async submitLogin() {
     const username = (document.getElementById('login-input-username')?.value || '').trim();
     const password = (document.getElementById('login-input-password')?.value || '').trim();
+    const submitBtn = document.getElementById('btn-login-submit');
 
     if (!username || !password) {
       this.showToast('يرجى إدخال اسم المستخدم وكلمة المرور', 'error');
       return;
     }
 
-    // 1. Try Firebase Auth login first
-    if (window.FDB) {
-      const fbRes = await window.FDB.login(username, password);
-      if (fbRes.success && fbRes.user) {
-        this.showToast('تم تسجيل الدخول بنجاح عبر Firebase Auth');
-        let userObj = (this.db.users || []).find(u => 
-          (u.email && u.email.toLowerCase() === fbRes.user.email?.toLowerCase()) || 
-          (u.username && u.username.toLowerCase() === username.toLowerCase())
-        );
-        if (!userObj) {
-          userObj = {
-            id: fbRes.user.uid,
-            name: username,
-            username: username,
-            email: fbRes.user.email,
-            role: 'مدير النظام (أدمن)',
-            status: 'active'
-          };
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = `<span>⏳</span> جاري التحقق من الحساب...`;
+    }
+
+    try {
+      // 1. Try local stored accounts
+      const cleanUsername = username.toLowerCase();
+      const foundUser = (this.db.users || []).find(u => {
+        const uLogin = (u.username || '').toLowerCase();
+        const uFullName = (u.name || '').toLowerCase();
+        const uEmail = (u.email || '').toLowerCase();
+        const isLoginMatch = (uLogin === cleanUsername || uFullName === cleanUsername || uEmail === cleanUsername);
+        const isPassMatch = (u.password === password);
+        return isLoginMatch && isPassMatch;
+      });
+
+      if (foundUser) {
+        if (foundUser.status !== 'active') {
+          this.showToast('هذا الحساب معطل، يرجى مراجعة إدارة النظام', 'error');
+          return;
         }
-        this.loginAsUser(userObj);
+        this.loginAsUser(foundUser);
         return;
       }
-    }
 
-    // 2. Validate against stored users
-    const cleanUsername = username.toLowerCase();
-    const foundUser = (this.db.users || []).find(u => {
-      const uLogin = (u.username || '').toLowerCase();
-      const uFullName = (u.name || '').toLowerCase();
-      const isLoginMatch = uLogin === cleanUsername || uFullName === cleanUsername;
-      const isPassMatch = (u.password === password);
-      return isLoginMatch && isPassMatch;
-    });
+      // 2. Try Firebase Auth
+      if (window.FDB) {
+        const fbRes = await window.FDB.login(username, password);
+        if (fbRes.success && fbRes.user) {
+          let userObj = (this.db.users || []).find(u => 
+            (u.email && u.email.toLowerCase() === fbRes.user.email?.toLowerCase()) || 
+            (u.username && u.username.toLowerCase() === username.toLowerCase())
+          );
+          if (!userObj) {
+            userObj = {
+              id: fbRes.user.uid,
+              name: username,
+              username: username,
+              email: fbRes.user.email,
+              role: 'مدير النظام (أدمن)',
+              status: 'active'
+            };
+          }
+          this.loginAsUser(userObj);
+          return;
+        }
+      }
 
-    if (!foundUser) {
       this.showToast('اسم المستخدم أو كلمة المرور غير صحيحة', 'error');
-      return;
+    } finally {
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = `<span>🔐</span> دخول للنظام`;
+      }
     }
-
-    if (foundUser.status !== 'active') {
-      this.showToast('هذا الحساب معطل، يرجى مراجعة إدارة النظام', 'error');
-      return;
-    }
-
-    this.loginAsUser(foundUser);
   },
 
   loginAsUser(user) {
@@ -7881,19 +7967,10 @@ const App = {
       this.db.users[idx] = { ...this.db.users[idx], ...user };
     }
 
-    this.syncDB();
-    this.updateHeaderProfile();
-    this.applyUserPermissionsUI();
+    this._isMandatoryModal = false;
     this.closeModal();
+    this.unlockAppAfterLogin();
     this.showToast(`أهلاً بك، تم تسجيل الدخول بنجاح كـ ${user.name}`);
-
-    if (this.isCurrentUserAdmin()) {
-      this.navigateTo(this.activePage || 'dashboard');
-    } else if (!this.canAccessPage(this.activePage)) {
-      this.navigateTo(this.getFirstAllowedPage());
-    } else {
-      this.renderCurrentPage();
-    }
   },
 
   // Backup: Download JSON
@@ -8032,7 +8109,10 @@ const App = {
   // ==========================================
   // MODAL UTILITIES
   // ==========================================
-  openModal(contentHtml, customMaxWidth = '580px') {
+  _isMandatoryModal: false,
+
+  openModal(contentHtml, customMaxWidth = '580px', isMandatory = false) {
+    this._isMandatoryModal = !!isMandatory;
     let overlay = document.getElementById('global-modal-overlay');
     if (!overlay) {
       overlay = document.createElement('div');
@@ -8042,7 +8122,7 @@ const App = {
       document.body.appendChild(overlay);
 
       overlay.addEventListener('click', (e) => {
-        if (e.target === overlay) App.closeModal();
+        if (e.target === overlay && !this._isMandatoryModal) App.closeModal();
       });
     }
 
@@ -8051,12 +8131,24 @@ const App = {
       container.style.maxWidth = customMaxWidth || '580px';
       container.innerHTML = contentHtml;
     }
+    if (this._isMandatoryModal) {
+      overlay.classList.add('mandatory-auth');
+    } else {
+      overlay.classList.remove('mandatory-auth');
+    }
     overlay.classList.add('show');
   },
 
   closeModal() {
+    if (this._isMandatoryModal && (!this.db || !this.db.currentUser)) {
+      return; // Cannot dismiss mandatory modal before authenticating
+    }
+    this._isMandatoryModal = false;
     const overlay = document.getElementById('global-modal-overlay');
-    if (overlay) overlay.classList.remove('show');
+    if (overlay) {
+      overlay.classList.remove('show');
+      overlay.classList.remove('mandatory-auth');
+    }
     const container = document.getElementById('global-modal-container');
     if (container) container.style.maxWidth = '580px';
   },
