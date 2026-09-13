@@ -4,12 +4,20 @@
 
 const STORAGE_KEY = 'HOSSAM_ERP_FIRESTORE_LIVE_V3';
 
-// Completely purge any legacy mock/demo data from browser storage
+// Completely purge any legacy mock/demo data and cached user session from browser storage
 try {
   localStorage.removeItem('HOSSAM_ERP_FIRESTORE_LIVE_V2');
   localStorage.removeItem('HOSSAM_ERP_FIRESTORE_LIVE_V1');
   localStorage.removeItem('HOSSAM_ERP_DATABASE_V2');
   localStorage.removeItem('HOSSAM_ERP_DATABASE');
+  const cachedV3 = localStorage.getItem(STORAGE_KEY);
+  if (cachedV3) {
+    const parsed = JSON.parse(cachedV3);
+    if (parsed && parsed.currentUser) {
+      parsed.currentUser = null;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+    }
+  }
 } catch (e) {}
 
 const defaultAdminUser = {
