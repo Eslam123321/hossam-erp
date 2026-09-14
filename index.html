@@ -8,12 +8,22 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Hossam ERP - نظام إدارة وتوزيع مخزون السجاير بالقروصة</title>
   <meta name="description" content="نظام ERP متكامل لإدارة مخزون السجاير بالقروصة، نقاط البيع، حسابات العملاء، عهد المناديب، وتقارير الخزينة بالجنيه المصري">
-  <link rel="stylesheet" href="css/style.css?v=2.3">
+  <link rel="stylesheet" href="css/style.css?v=2.4">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📦</text></svg>">
 </head>
 <body>
 
 <div class="app-container">
+
+  <!-- Cloud Initial Loading Overlay (Shows on fresh device/empty cache until cloud data arrives) -->
+  <div id="cloud-sync-overlay" class="cloud-sync-overlay" style="display: none;">
+    <div class="cloud-sync-modal">
+      <div class="cloud-sync-logo">H</div>
+      <div class="cloud-spinner-ring"></div>
+      <h3 class="cloud-sync-title">جاري مزامنة بيانات المؤسسة من السحابة...</h3>
+      <p class="cloud-sync-desc">يتم الآن جلب الفواتير والمخزون وسندات القبض وحسابات العملاء من قاعدة بيانات Firebase</p>
+    </div>
+  </div>
 
   <!-- ==========================================
        SIDEBAR NAVIGATION
@@ -114,6 +124,12 @@
       <div class="header-actions">
         <!-- Date / Clock -->
         <span id="header-date-clock" style="font-size: 0.82rem; color: var(--text-secondary); display: none; font-weight: 600;"></span>
+
+        <!-- Cloud Sync Status Pill -->
+        <div class="cloud-sync-pill online" id="header-cloud-sync-pill" onclick="App.forceCloudSync()" title="المزامنة السحابية نشطة مع Firebase - انقر للتحديث الفوري">
+          <span class="cloud-pill-dot"></span>
+          <span class="cloud-pill-text" id="header-cloud-sync-text">سحابي متصل</span>
+        </div>
 
         <!-- Quick Treasury Pill -->
         <div class="quick-treasury-pill" onclick="App.navigateTo('reports')" title="الخزينة الحالية">
@@ -674,13 +690,13 @@
         <div class="glass-panel" style="margin-bottom: 20px; padding: 16px 20px;">
           <div style="display: flex; gap: 14px; flex-wrap: wrap; align-items: center;">
             <div style="flex: 1; min-width: 250px;">
-              <input type="text" id="reports-search-input" class="form-control" placeholder="🔍 فلتر برقم الفاتورة أو اسم العميل..." oninput="App.filterReportsData()">
+              <input type="text" id="reports-search-input" class="form-control" placeholder="🔍 فلتر برقم الفاتورة أو رقم السند (TR) أو اسم العميل أو المندوب..." oninput="App.filterReportsData()">
             </div>
-            <div style="width: 220px;">
+            <div style="width: 230px;">
               <select id="reports-period-filter" class="custom-select" onchange="App.filterReportsData()">
                 <option value="all">كل الفترات الزمنية</option>
-                <option value="today">المبيعات اليومية (اليوم)</option>
-                <option value="month">المبيعات الشهرية (هذا الشهر)</option>
+                <option value="today">اليومية (اليوم)</option>
+                <option value="month">الشهرية (هذا الشهر)</option>
               </select>
             </div>
           </div>
@@ -819,6 +835,7 @@
               <span>👥</span> الحسابات وصلاحيات المناديب والمستخدمين
             </div>
           </div>
+          <div id="settings-users-alert-box" style="display: none; margin: 0 20px 16px;"></div>
           <div class="table-responsive">
             <table class="modern-table">
               <thead>
@@ -928,6 +945,6 @@
 
 <!-- App Scripts -->
 <script src="js/data.js?v=2.3"></script>
-<script src="js/app.js?v=2.3"></script>
+<script src="js/app.js?v=2.4"></script>
 </body>
 </html>

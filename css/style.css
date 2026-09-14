@@ -3543,3 +3543,150 @@ body.app-auth-locked .app-container {
   }
 }
 
+/* ==========================================
+   CLOUD SYNC STATUS PILL & OVERLAY
+   ========================================== */
+.cloud-sync-pill {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: rgba(0, 245, 160, 0.08);
+  border: 1px solid rgba(0, 245, 160, 0.25);
+  border-radius: 20px;
+  padding: 5px 12px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--emerald-neon);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+.cloud-sync-pill:hover {
+  background: rgba(0, 245, 160, 0.16);
+  border-color: var(--emerald-neon);
+  transform: translateY(-1px);
+}
+.cloud-sync-pill.syncing {
+  background: rgba(0, 212, 255, 0.1);
+  border-color: rgba(0, 212, 255, 0.35);
+  color: var(--cyan);
+}
+.cloud-pill-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--emerald-neon);
+  box-shadow: 0 0 8px var(--emerald-glow);
+}
+.cloud-sync-pill.syncing .cloud-pill-dot {
+  background: var(--cyan);
+  box-shadow: 0 0 8px rgba(0, 212, 255, 0.8);
+  animation: cloudPulse 0.8s infinite alternate;
+}
+
+@keyframes cloudPulse {
+  from { transform: scale(0.8); opacity: 0.5; }
+  to { transform: scale(1.3); opacity: 1; }
+}
+
+.cloud-sync-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 99999;
+  background: rgba(4, 6, 9, 0.85);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: fadeIn 0.3s ease;
+}
+
+.cloud-sync-modal {
+  background: var(--bg-card);
+  border: 1px solid var(--border-neon);
+  border-radius: var(--radius-lg);
+  padding: 36px 30px;
+  max-width: 440px;
+  width: 100%;
+  text-align: center;
+  box-shadow: var(--shadow-modal);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.cloud-sync-logo {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  background: var(--emerald-gradient);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #040609;
+  font-size: 1.8rem;
+  font-weight: 900;
+  box-shadow: 0 0 25px var(--emerald-glow);
+  margin-bottom: 18px;
+}
+
+.cloud-spinner-ring {
+  width: 42px;
+  height: 42px;
+  border: 3px solid rgba(0, 245, 160, 0.15);
+  border-top-color: var(--emerald-neon);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+  margin-bottom: 18px;
+}
+
+.cloud-sync-title {
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: var(--text-white);
+  margin-bottom: 8px;
+}
+
+.cloud-sync-desc {
+  font-size: 0.84rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+/* Admin duplicate accounts merge banner */
+.admin-merge-alert {
+  background: linear-gradient(135deg, rgba(255, 184, 0, 0.12), rgba(255, 107, 0, 0.08));
+  border: 1px solid rgba(255, 184, 0, 0.35);
+  border-radius: 12px;
+  padding: 14px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.admin-merge-alert .alert-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.admin-merge-alert .alert-icon {
+  font-size: 1.6rem;
+}
+.admin-merge-alert .alert-text strong {
+  color: var(--gold);
+  font-size: 0.95rem;
+  display: block;
+  margin-bottom: 3px;
+}
+.admin-merge-alert .alert-text p {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  margin: 0;
+}
+

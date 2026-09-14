@@ -23,6 +23,99 @@ const App = {
   selectedCategory: 'all',
   activeRepForPOS: null,
 
+  _unsubListeners: [],
+
+  stopListeners() {
+    if (this._unsubListeners && this._unsubListeners.length > 0) {
+      this._unsubListeners.forEach(unsub => {
+        try { if (typeof unsub === 'function') unsub(); } catch(e) {}
+      });
+      this._unsubListeners = [];
+    }
+  },
+
+  showCloudSyncOverlay(show = true) {
+    const overlay = document.getElementById('cloud-sync-overlay');
+    if (overlay) overlay.style.display = show ? 'flex' : 'none';
+  },
+
+  updateCloudStatus(status = 'online', text = 'سحابي متصل') {
+    const pill = document.getElementById('header-cloud-sync-pill');
+    const label = document.getElementById('header-cloud-sync-text');
+    if (pill) {
+      pill.className = `cloud-sync-pill ${status}`;
+    }
+    if (label) {
+      label.textContent = text;
+    }
+  },
+
+  async pullAllFromFirestore() {
+    if (!window.FDB || !window.FDB.db) return false;
+    this.updateCloudStatus('syncing', 'جاري المزامنة...');
+    try {
+      const collections = ['items', 'customers', 'invoices', 'treasury', 'reps', 'users', 'settings', 'notifications'];
+      const results = await Promise.allSettled(
+        collections.map(col => window.FDB.db.collection(col).get())
+      );
+      let updated = false;
+      results.forEach((res, idx) => {
+        if (res.status === 'fulfilled' && res.value) {
+          const colName = collections[idx];
+          const docs = [];
+          res.value.forEach(doc => docs.push({ id: doc.id, ...doc.data() }));
+          if (docs.length > 0) {
+            if (colName === 'items') { this.db.items = docs; updated = true; }
+            else if (colName === 'customers') { this.db.customers = docs; updated = true; }
+            else if (colName === 'invoices') {
+              this.db.invoices = docs.sort((a, b) => new Date(b.date || b.localTimestamp || 0) - new Date(a.date || a.localTimestamp || 0));
+              updated = true;
+            }
+            else if (colName === 'treasury') {
+              this.db.treasuryLogs = docs.sort((a, b) => new Date(b.date || b.localTimestamp || 0) - new Date(a.date || a.localTimestamp || 0));
+              updated = true;
+            }
+            else if (colName === 'reps') { this.db.reps = docs; updated = true; }
+            else if (colName === 'users') { this.db.users = docs; updated = true; }
+            else if (colName === 'notifications') { this.db.notifications = docs; updated = true; }
+            else if (colName === 'settings') {
+              const capitalDoc = docs.find(d => d.id === 'capital');
+              if (capitalDoc) {
+                if (capitalDoc.capital !== undefined) this.db.capital = Number(capitalDoc.capital) || 0;
+                if (capitalDoc.treasury !== undefined) this.db.treasury = Number(capitalDoc.treasury) || 0;
+              }
+              const configDoc = docs.find(d => d.id === 'config');
+              if (configDoc) this.db.settings = { ...this.db.settings, ...configDoc };
+              updated = true;
+            }
+          }
+        }
+      });
+      if (updated) {
+        this.sanitizeRepsData();
+        this.reconcilePastRepInvoicesStock();
+        this.reconcileRepsStats();
+        this.syncDB();
+        this.requestUIRefresh();
+      }
+      this.updateCloudStatus('online', 'سحابي متصل');
+      this.showCloudSyncOverlay(false);
+      return true;
+    } catch (err) {
+      console.warn('Direct pull from Firestore error:', err);
+      this.updateCloudStatus('online', 'سحابي متصل');
+      this.showCloudSyncOverlay(false);
+      return false;
+    }
+  },
+
+  async forceCloudSync() {
+    this.showToast('جاري تحديث ومزامنة البيانات من السحابة...', 'info');
+    await this.pullAllFromFirestore();
+    this.startListeners();
+    this.showToast('تمت المزامنة وتحديث البيانات من السحابة بنجاح ✓');
+  },
+
   init() {
     this.db = window.ERP_DB;
     this.sanitizeRepsData();
@@ -31,6 +124,15 @@ const App = {
     this.bindEvents();
     this.setupClock();
     this.startListeners();
+
+    // If local cache has 0 items and 0 invoices (new device or fresh browser), show overlay and pull immediately
+    const isColdDevice = (!this.db.items || this.db.items.length === 0) && (!this.db.invoices || this.db.invoices.length === 0);
+    if (isColdDevice) {
+      this.showCloudSyncOverlay(true);
+      this.pullAllFromFirestore().finally(() => {
+        setTimeout(() => this.showCloudSyncOverlay(false), 400);
+      });
+    }
 
     if (!this.db || !this.db.currentUser) {
       this.lockAppForLogin();
@@ -176,67 +278,84 @@ const App = {
   // Realtime Listeners for Firestore Collections
   startListeners() {
     if (!window.FDB) return;
+    this.stopListeners();
 
     // 1. Items Realtime Sync
-    window.FDB.initRealtimeSync('items', (items) => {
+    const u1 = window.FDB.initRealtimeSync('items', (items) => {
       if (items && Array.isArray(items)) {
         this.db.items = items;
         this.syncDB();
+        this.showCloudSyncOverlay(false);
+        this.updateCloudStatus('online', 'سحابي متصل');
         this.requestUIRefresh();
       }
     });
+    if (typeof u1 === 'function') this._unsubListeners.push(u1);
 
     // 2. Customers Realtime Sync
-    window.FDB.initRealtimeSync('customers', (customers) => {
+    const u2 = window.FDB.initRealtimeSync('customers', (customers) => {
       if (customers && Array.isArray(customers)) {
         this.db.customers = customers;
         this.syncDB();
+        this.showCloudSyncOverlay(false);
+        this.updateCloudStatus('online', 'سحابي متصل');
         this.requestUIRefresh();
       }
     });
+    if (typeof u2 === 'function') this._unsubListeners.push(u2);
 
     // 3. Invoices Realtime Sync
-    window.FDB.initRealtimeSync('invoices', (invoices) => {
+    const u3 = window.FDB.initRealtimeSync('invoices', (invoices) => {
       if (invoices && Array.isArray(invoices)) {
         // Sort newest first
         this.db.invoices = invoices.sort((a, b) => new Date(b.date || b.localTimestamp || 0) - new Date(a.date || a.localTimestamp || 0));
         this.reconcilePastRepInvoicesStock();
         this.syncDB();
+        this.showCloudSyncOverlay(false);
+        this.updateCloudStatus('online', 'سحابي متصل');
         this.requestUIRefresh();
       }
     });
+    if (typeof u3 === 'function') this._unsubListeners.push(u3);
 
     // 4. Treasury Logs Realtime Sync
-    window.FDB.initRealtimeSync('treasury', (logs) => {
+    const u4 = window.FDB.initRealtimeSync('treasury', (logs) => {
       if (logs && Array.isArray(logs)) {
         this.db.treasuryLogs = logs.sort((a, b) => new Date(b.date || b.localTimestamp || 0) - new Date(a.date || a.localTimestamp || 0));
         this.syncDB();
+        this.showCloudSyncOverlay(false);
+        this.updateCloudStatus('online', 'سحابي متصل');
         this.requestUIRefresh();
       }
     });
+    if (typeof u4 === 'function') this._unsubListeners.push(u4);
 
     // 5. Reps Realtime Sync
-    window.FDB.initRealtimeSync('reps', (reps) => {
+    const u5 = window.FDB.initRealtimeSync('reps', (reps) => {
       if (reps && Array.isArray(reps)) {
         this.db.reps = reps;
         this.sanitizeRepsData();
         this.reconcileRepsStats();
         this.syncDB();
+        this.showCloudSyncOverlay(false);
+        this.updateCloudStatus('online', 'سحابي متصل');
         this.requestUIRefresh();
       }
     });
+    if (typeof u5 === 'function') this._unsubListeners.push(u5);
 
     // 6. Users Realtime Sync
-    window.FDB.initRealtimeSync('users', (users) => {
+    const u6 = window.FDB.initRealtimeSync('users', (users) => {
       if (users && Array.isArray(users)) {
         this.db.users = users;
         this.syncDB();
         if (this.activePage === 'settings') this.renderSettings();
       }
     });
+    if (typeof u6 === 'function') this._unsubListeners.push(u6);
 
     // 7. Settings & Capital Realtime Sync
-    window.FDB.initRealtimeSync('settings', (docs) => {
+    const u7 = window.FDB.initRealtimeSync('settings', (docs) => {
       if (docs && docs.length > 0) {
         const capitalDoc = docs.find(d => d.id === 'capital');
         if (capitalDoc && capitalDoc.capital !== undefined) {
@@ -250,18 +369,87 @@ const App = {
           this.db.settings = { ...this.db.settings, ...configDoc };
         }
         this.syncDB();
+        this.showCloudSyncOverlay(false);
+        this.updateCloudStatus('online', 'سحابي متصل');
         this.requestUIRefresh();
       }
     });
+    if (typeof u7 === 'function') this._unsubListeners.push(u7);
 
     // 8. Notifications Realtime Sync
-    window.FDB.initRealtimeSync('notifications', (notifs) => {
+    const u8 = window.FDB.initRealtimeSync('notifications', (notifs) => {
       if (notifs && Array.isArray(notifs)) {
         this.db.notifications = notifs.sort((a, b) => new Date(b.localTimestamp || 0) - new Date(a.localTimestamp || 0));
         this.syncDB();
         this.requestUIRefresh();
       }
     });
+    if (typeof u8 === 'function') this._unsubListeners.push(u8);
+  },
+
+  // Safe Date Parsing and Filtering Helper
+  parseRecordDate(record) {
+    if (!record) return null;
+    // 1. Try ISO localTimestamp
+    if (record.localTimestamp) {
+      const d = new Date(record.localTimestamp);
+      if (!isNaN(d.getTime())) return d;
+    }
+    // 2. Try Firestore createdAt
+    if (record.createdAt) {
+      if (typeof record.createdAt.toDate === 'function') {
+        const d = record.createdAt.toDate();
+        if (!isNaN(d.getTime())) return d;
+      }
+      if (record.createdAt.seconds) {
+        return new Date(record.createdAt.seconds * 1000);
+      }
+      const d = new Date(record.createdAt);
+      if (!isNaN(d.getTime())) return d;
+    }
+    // 3. Try parsing string date
+    if (record.date && typeof record.date === 'string') {
+      const d = new Date(record.date);
+      if (!isNaN(d.getTime())) return d;
+
+      // Clean invisible characters, Arabic indicators, and leading dots
+      const cleanStr = record.date.replace(/[\u200E\u200F\u061C.]/g, '').trim();
+      // Look for YYYY/M/D or YYYY-M-D
+      const ymd = cleanStr.match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+      if (ymd) {
+        const year = parseInt(ymd[1], 10);
+        const month = parseInt(ymd[2], 10) - 1;
+        const day = parseInt(ymd[3], 10);
+        return new Date(year, month, day);
+      }
+      // Look for D/M/YYYY or D-M-YYYY
+      const dmy = cleanStr.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+      if (dmy) {
+        const day = parseInt(dmy[1], 10);
+        const month = parseInt(dmy[2], 10) - 1;
+        const year = parseInt(dmy[3], 10);
+        return new Date(year, month, day);
+      }
+    }
+    return null;
+  },
+
+  isRecordInPeriod(record, period = 'all') {
+    if (!period || period === 'all') return true;
+    const d = this.parseRecordDate(record);
+    if (!d) return false;
+
+    const now = new Date();
+    if (period === 'today') {
+      return d.getFullYear() === now.getFullYear() &&
+             d.getMonth() === now.getMonth() &&
+             d.getDate() === now.getDate();
+    }
+    if (period === 'month') {
+      return d.getFullYear() === now.getFullYear() &&
+             d.getMonth() === now.getMonth();
+    }
+    return true;
   },
 
   // User & Permission Management Helpers
@@ -749,27 +937,14 @@ const App = {
   // 1. DASHBOARD & ANALYTICS
   // ==========================================
   renderDashboard() {
-    // 1. Daily Sales (Safe date matching)
-    const today = new Date();
-    const todayISO = today.toISOString().split('T')[0];
+    // 1. Daily Sales
     const dailySales = (this.db.invoices || [])
-      .filter(inv => {
-        if (!inv.date) return false;
-        if (typeof inv.date === 'string' && inv.date.startsWith(todayISO)) return true;
-        const d = new Date(inv.date);
-        return !isNaN(d) && d.toISOString().split('T')[0] === todayISO;
-      })
+      .filter(inv => this.isRecordInPeriod(inv, 'today'))
       .reduce((sum, inv) => sum + (Number(inv.grandTotal) || 0), 0);
 
     // 2. Monthly Sales
-    const currentMonthPrefix = todayISO.substring(0, 7);
     const monthlySales = (this.db.invoices || [])
-      .filter(inv => {
-        if (!inv.date) return false;
-        if (typeof inv.date === 'string' && inv.date.startsWith(currentMonthPrefix)) return true;
-        const d = new Date(inv.date);
-        return !isNaN(d) && d.toISOString().substring(0, 7) === currentMonthPrefix;
-      })
+      .filter(inv => this.isRecordInPeriod(inv, 'month'))
       .reduce((sum, inv) => sum + (Number(inv.grandTotal) || 0), 0);
 
     // 3. Net Profit (calculated on all invoices)
@@ -4520,32 +4695,24 @@ const App = {
   },
 
   filterReportsData() {
-    const searchVal = (document.getElementById('reports-search-input')?.value || '').toLowerCase();
+    const searchVal = (document.getElementById('reports-search-input')?.value || '').toLowerCase().trim();
     const period = document.getElementById('reports-period-filter')?.value || 'all';
-
-    const now = new Date();
-    const todayStr = now.toISOString().split('T')[0];
-    const monthPrefix = todayStr.substring(0, 7);
 
     // Filter invoices
     let filteredInvoices = (this.db.invoices || []).filter(inv => {
-      const matchSearch = inv.id.toLowerCase().includes(searchVal) || 
+      const matchSearch = !searchVal ||
+                          (inv.id && inv.id.toLowerCase().includes(searchVal)) || 
                           (inv.customerName && inv.customerName.toLowerCase().includes(searchVal)) ||
                           (inv.sellerName && inv.sellerName.toLowerCase().includes(searchVal));
       
-      let matchDate = true;
-      if (period === 'today') {
-        matchDate = inv.date && inv.date.startsWith(todayStr);
-      } else if (period === 'month') {
-        matchDate = inv.date && inv.date.startsWith(monthPrefix);
-      }
+      const matchDate = this.isRecordInPeriod(inv, period);
       return matchSearch && matchDate;
     });
 
     const invTbody = document.getElementById('reports-invoices-tbody');
     if (invTbody) {
       if (filteredInvoices.length === 0) {
-        invTbody.innerHTML = `<tr><td colspan="10" style="text-align: center; padding: 25px; color: var(--text-muted);">لا توجد فواتير مطابقة</td></tr>`;
+        invTbody.innerHTML = `<tr><td colspan="10" style="text-align: center; padding: 25px; color: var(--text-muted);">لا توجد فواتير مطابقة للفترة المحددة</td></tr>`;
       } else {
         invTbody.innerHTML = filteredInvoices.map(inv => `
           <tr>
@@ -4578,17 +4745,13 @@ const App = {
     const trTbody = document.getElementById('reports-treasury-tbody');
     if (trTbody) {
       let filteredLogs = (this.db.treasuryLogs || []).filter(log => {
-        const matchSearch = log.id.toLowerCase().includes(searchVal) || 
+        const matchSearch = !searchVal ||
+                            (log.id && log.id.toLowerCase().includes(searchVal)) || 
                             (log.sourceName && log.sourceName.toLowerCase().includes(searchVal)) || 
                             (log.type && log.type.toLowerCase().includes(searchVal)) ||
                             (log.notes && log.notes.toLowerCase().includes(searchVal)) ||
                             (log.receivedBy && log.receivedBy.toLowerCase().includes(searchVal));
-        let matchDate = true;
-        if (period === 'today') {
-          matchDate = log.date && log.date.startsWith(todayStr);
-        } else if (period === 'month') {
-          matchDate = log.date && log.date.startsWith(monthPrefix);
-        }
+        const matchDate = this.isRecordInPeriod(log, period);
         return matchSearch && matchDate;
       });
 
@@ -7182,6 +7345,36 @@ const App = {
     setVal('settings-address', s.address);
     setVal('settings-footer-text', s.receiptFooter);
 
+    // Check for duplicate admin accounts
+    const alertBox = document.getElementById('settings-users-alert-box');
+    if (alertBox) {
+      const adminUsers = (this.db.users || []).filter(u => 
+        (u.role && (u.role.includes('مدير') || u.role.includes('أدمن'))) ||
+        (u.name && u.name.includes('حسام')) ||
+        u.username === 'admin' || u.username === 'hossam'
+      );
+      if (adminUsers.length > 1) {
+        alertBox.style.display = 'block';
+        alertBox.innerHTML = `
+          <div class="admin-merge-alert">
+            <div class="alert-content">
+              <span class="alert-icon">⚠️</span>
+              <div class="alert-text">
+                <strong>تم رصد حسابين لإدارة النظام (${adminUsers.map(a => '@' + a.username).join(' و ')})</strong>
+                <p>تم تسجيل حساب إضافي أثناء تسجيل الدخول من جهاز جديد. يمكنك الاحتفاظ بالحساب الرئيسي ودمج الحسابين بنقرة واحدة.</p>
+              </div>
+            </div>
+            <button type="button" class="btn btn-warning btn-sm" onclick="App.mergeAdminAccounts()" style="white-space: nowrap; font-weight: 700; cursor: pointer;">
+              <span>⚡</span> دمج وتوحيد حسابات الإدارة الآن
+            </button>
+          </div>
+        `;
+      } else {
+        alertBox.style.display = 'none';
+        alertBox.innerHTML = '';
+      }
+    }
+
     // Users & Reps Table
     const tbody = document.getElementById('settings-users-tbody');
     if (tbody) {
@@ -7636,11 +7829,99 @@ const App = {
     this.renderSettings();
   },
 
+  async mergeAdminAccounts() {
+    const adminUsers = (this.db.users || []).filter(u => 
+      (u.role && (u.role.includes('مدير') || u.role.includes('أدمن'))) ||
+      (u.name && u.name.includes('حسام')) ||
+      u.username === 'admin' || u.username === 'hossam'
+    );
+    if (adminUsers.length <= 1) {
+      this.showToast('لا توجد حسابات إدارة مكررة حالياً', 'info');
+      return;
+    }
+
+    const confirmed = await this.confirmDialog({
+      title: 'دمج وتوحيد حسابات الإدارة',
+      subtitle: 'توحيد حسابات حسام (المدير العام)',
+      message: 'سيتم دمج وتوحيد حسابات الإدارة المكررة في حساب رسمي واحد رئيسي وحذف الحساب الإضافي من السحابة.',
+      icon: '👥',
+      type: 'warning',
+      confirmText: 'نعم، توحيد الحسابات الآن',
+      cancelText: 'إلغاء'
+    });
+    if (!confirmed) return;
+
+    // Pick primary: prefer the one with phone or username === 'admin' or id === 'admin_root'
+    let primary = adminUsers.find(u => u.username === 'admin' || u.id === 'admin_root' || (u.phone && u.phone.length > 5)) || adminUsers[0];
+    const duplicates = adminUsers.filter(u => u.id !== primary.id);
+
+    // Merge missing details if any
+    duplicates.forEach(dup => {
+      if (!primary.phone && dup.phone) primary.phone = dup.phone;
+      if (!primary.email && dup.email) primary.email = dup.email;
+      // Delete duplicate from Firestore
+      if (window.FDB && window.FDB.deleteDocument) {
+        window.FDB.deleteDocument('users', dup.id).catch(() => {});
+      }
+    });
+
+    primary.name = 'حسام (المدير العام)';
+    primary.role = 'مدير النظام (أدمن)';
+    primary.status = 'active';
+    primary.permissions = [
+      'كافة الصلاحيات',
+      'الخزينة والمصروفات',
+      'الأسعار وسياسة البيع',
+      'المخزون وإدخال الشحنات',
+      'إدارة المستخدمين والإعدادات',
+      'التقارير والأرباح',
+      'نقطة بيع المندوب',
+      'مبيعات المخزن (كاشير)',
+      'سندات قبض وتحصيل',
+      'إدارة العملاء والديون',
+      'إدارة المناديب والعهد'
+    ];
+
+    if (window.FDB && window.FDB.setDocument) {
+      window.FDB.setDocument('users', primary.id, primary).catch(() => {});
+    }
+
+    const dupIds = new Set(duplicates.map(d => d.id));
+    this.db.users = this.db.users.filter(u => !dupIds.has(u.id));
+    const pIdx = this.db.users.findIndex(u => u.id === primary.id);
+    if (pIdx !== -1) {
+      this.db.users[pIdx] = primary;
+    } else {
+      this.db.users.unshift(primary);
+    }
+
+    this.syncDB();
+    this.showToast('تم دمج وتوحيد حساب الإدارة بنجاح وحذف التكرار من السحابة ✓');
+    this.renderSettings();
+  },
+
   async deleteUser(userId) {
     const u = this.db.users.find(item => item.id === userId);
     if (!u) return;
-    if (u.id === 'user_1' || u.username === 'admin' || (u.name && u.name.includes('حسام'))) {
-      this.showToast('لا يمكن حذف الحساب الرئيسي للمالك (حساب حسام)', 'error');
+
+    const currentUser = this.getCurrentUser();
+    if (currentUser && (currentUser.id === userId || currentUser.username === u.username)) {
+      this.showToast('لا يمكنك حذف الحساب المسجل به حالياً', 'error');
+      return;
+    }
+
+    const adminCount = (this.db.users || []).filter(item => 
+      (item.role && (item.role.includes('مدير') || item.role.includes('أدمن'))) ||
+      (item.name && item.name.includes('حسام')) ||
+      item.username === 'admin' || item.username === 'hossam'
+    ).length;
+
+    const isThisAdmin = (u.role && (u.role.includes('مدير') || u.role.includes('أدمن'))) ||
+                        (u.name && u.name.includes('حسام')) ||
+                        u.username === 'admin' || u.username === 'hossam';
+
+    if (adminCount <= 1 && isThisAdmin) {
+      this.showToast('لا يمكن حذف حساب الأدمن الوحيد في النظام', 'error');
       return;
     }
 
@@ -7878,20 +8159,49 @@ const App = {
             u.id === fbRes.user.uid
           );
 
-          const isRootAdmin = authEmail.includes('admin') || username.toLowerCase() === 'admin';
+          const isRootAdmin = authEmail.includes('admin') || username.toLowerCase() === 'admin' || username.toLowerCase() === 'hossam' || authEmail.includes('hossam');
+
+          // If not found in local cache, query Firestore directly before creating a new user document
+          if (!userObj && window.FDB && window.FDB.db) {
+            try {
+              const snap = await window.FDB.db.collection('users').get();
+              const firestoreUsers = [];
+              snap.forEach(doc => firestoreUsers.push({ id: doc.id, ...doc.data() }));
+              if (firestoreUsers.length > 0) {
+                this.db.users = firestoreUsers;
+                this.syncDB();
+                userObj = firestoreUsers.find(u => 
+                  (u.email && u.email.toLowerCase() === authEmail) || 
+                  (u.username && u.username.toLowerCase() === username.toLowerCase()) ||
+                  u.id === fbRes.user.uid ||
+                  (isRootAdmin && (u.username === 'admin' || u.username === 'hossam' || (u.role && u.role.includes('مدير'))))
+                );
+              }
+            } catch (err) {
+              console.warn('Direct Firestore users lookup error:', err);
+            }
+          }
 
           if (!userObj) {
-            userObj = {
-              id: fbRes.user.uid,
-              name: isRootAdmin ? 'حسام (المدير العام)' : (fbRes.user.displayName || username),
-              username: username,
-              email: fbRes.user.email,
-              role: isRootAdmin ? 'مدير النظام (أدمن)' : 'مستخدم',
-              status: 'active',
-              permissions: isRootAdmin ? ['كافة الصلاحيات'] : []
-            };
-            if (window.FDB.setDocument) {
-              window.FDB.setDocument('users', userObj.id, userObj).catch(() => {});
+            // Check if an admin already exists in the system to prevent duplicates
+            const existingAdmin = (this.db.users || []).find(u => 
+              u.id === 'admin_root' || u.username === 'admin' || (u.role && u.role.includes('مدير'))
+            );
+            if (isRootAdmin && existingAdmin) {
+              userObj = existingAdmin;
+            } else {
+              userObj = {
+                id: fbRes.user.uid,
+                name: isRootAdmin ? 'حسام (المدير العام)' : (fbRes.user.displayName || username),
+                username: username,
+                email: fbRes.user.email,
+                role: isRootAdmin ? 'مدير النظام (أدمن)' : 'مستخدم',
+                status: 'active',
+                permissions: isRootAdmin ? ['كافة الصلاحيات'] : []
+              };
+              if (window.FDB.setDocument) {
+                window.FDB.setDocument('users', userObj.id, userObj).catch(() => {});
+              }
             }
           }
 
@@ -7977,6 +8287,16 @@ const App = {
     const idx = (this.db.users || []).findIndex(u => u.id === user.id || u.username === user.username);
     if (idx !== -1) {
       this.db.users[idx] = { ...this.db.users[idx], ...user };
+    }
+
+    // Ensure realtime listeners and cloud data are refreshed
+    this.startListeners();
+    const isColdCache = (!this.db.items || this.db.items.length === 0) && (!this.db.invoices || this.db.invoices.length === 0);
+    if (isColdCache) {
+      this.showCloudSyncOverlay(true);
+      this.pullAllFromFirestore().finally(() => {
+        setTimeout(() => this.showCloudSyncOverlay(false), 400);
+      });
     }
 
     this._isMandatoryModal = false;
