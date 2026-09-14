@@ -7633,11 +7633,12 @@ const App = {
           <div class="form-group">
             <label class="form-label">كلمة السر *</label>
             <div class="password-input-group">
-              <input type="password" id="edit-user-password" class="form-control" value="${u.password || ''}" placeholder="أدخل كلمة المرور">
+              <input type="password" id="edit-user-password" class="form-control" value="${u.password || ''}" placeholder="أدخل كلمة المرور (6 خانات على الأقل)">
               <button type="button" class="password-toggle-btn" onclick="App.togglePasswordVisibility('edit-user-password', this)">
                 👁️ إظهار
               </button>
             </div>
+            <small style="color: var(--text-muted); font-size: 0.75rem; margin-top: 4px; display: block;">🔒 لحسابات الإدارة: كلمة المرور يجب ألا تقل عن 6 خانات (أرقام أو حروف) للتوافق مع أمان Firebase</small>
           </div>
         </div>
 
@@ -7706,7 +7707,7 @@ const App = {
     }
   },
 
-  saveEditUser(userId) {
+  async saveEditUser(userId) {
     const u = this.db.users.find(item => item.id === userId);
     if (!u) {
       this.showToast('لم يتم العثور على الحساب', 'error');
@@ -7732,11 +7733,33 @@ const App = {
       return;
     }
 
+    const isHossamUser = userId === 'user_1' || 
+                         (fullName && fullName.includes('حسام')) || 
+                         username === 'admin' || 
+                         username === 'hossam' || 
+                         (u.role && u.role.includes('مدير')) ||
+                         (role && role.includes('مدير'));
+
+    // Firebase Auth strict password policy: Minimum 6 characters
+    if (isHossamUser && password.length < 6) {
+      this.showToast('كلمة مرور حساب المدير يجب ألا تقل عن 6 خانات (أرقام أو حروف) للتوافق مع أمان Firebase', 'error');
+      return;
+    }
+
     // Check username uniqueness
     const duplicate = this.db.users.find(item => item.id !== userId && item.username.toLowerCase() === username.toLowerCase());
     if (duplicate) {
       this.showToast('اسم الدخول مستخدم بالفعل لحساب آخر، يرجى اختيار اسم دخول آخر', 'error');
       return;
+    }
+
+    // If admin is updating password, synchronize with Firebase Auth first
+    if (isHossamUser && password !== u.password && window.FDB && window.FDB.updateAuthPassword) {
+      const authRes = await window.FDB.updateAuthPassword(password);
+      if (!authRes.success) {
+        this.showToast(authRes.error || 'تعذر تحديث كلمة المرور في Firebase Auth', 'error');
+        return;
+      }
     }
 
     // Collect selected permissions
@@ -7759,8 +7782,6 @@ const App = {
       'إدارة العملاء والديون',
       'إدارة المناديب والعهد'
     ];
-
-    const isHossamUser = userId === 'user_1' || (fullName && fullName.includes('حسام')) || username === 'admin' || username === 'hossam';
 
     // Update user object
     u.name = fullName;
@@ -7792,6 +7813,7 @@ const App = {
       this.db.currentUser.role = u.role;
       this.db.currentUser.phone = u.phone;
       this.db.currentUser.permissions = u.permissions;
+      this.db.currentUser.password = u.password;
       this.updateHeaderProfile();
       this.applyUserPermissionsUI();
     }
@@ -7799,10 +7821,6 @@ const App = {
     this.syncDB();
     if (window.FDB) {
       window.FDB.updateDocument('users', userId, u);
-      // If user changed password and is currently authenticated or matches admin email
-      if (password) {
-        window.FDB.updateAuthPassword(password);
-      }
     }
     this.closeModal();
     this.showToast(`تم حفظ وتحديث بيانات حساب "${fullName}" بنجاح`);
@@ -8172,12 +8190,25 @@ const App = {
 
           this.loginAsUser(userObj);
           return;
+        } else {
+          // If the user is trying to log in as Admin, strictly require Firebase Auth and do NOT fall through to local fallback
+          const cleanU = username.toLowerCase();
+          const isAttemptingAdmin = cleanU === 'admin' || cleanU === 'hossam' || cleanU.includes('@hossam-erp.com') || cleanU.includes('admin@');
+          if (isAttemptingAdmin) {
+            this.showToast('بيانات الدخول غير صحيحة، كلمة المرور غير مطابقة لحساب المدير في Firebase', 'error');
+            return;
+          }
         }
       }
 
-      // 2. Validate against Firestore synced users
+      // 2. Validate against Firestore synced users (strictly for non-admin roles e.g. reps)
       const cleanUsername = username.toLowerCase();
       const foundUser = (this.db.users || []).find(u => {
+        // Admin accounts must authenticate exclusively via Firebase Auth
+        const isAdm = (u.username && (u.username.toLowerCase() === 'admin' || u.username.toLowerCase() === 'hossam')) ||
+                      (u.role && (u.role.includes('مدير') || u.role.includes('أدمن')));
+        if (isAdm) return false;
+
         const uLogin = (u.username || '').toLowerCase();
         const uFullName = (u.name || '').toLowerCase();
         const uEmail = (u.email || '').toLowerCase();

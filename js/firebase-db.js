@@ -56,7 +56,16 @@ const FDB = {
   async ensureAuth() {
     if (auth.currentUser) return auth.currentUser;
     try {
-      const cred = await auth.signInWithEmailAndPassword("admin@hossam-erp.com", "01095412229");
+      let pass = "01095412229";
+      try {
+        const local = localStorage.getItem('hossam_erp_db_v2');
+        if (local) {
+          const parsed = JSON.parse(local);
+          const adm = (parsed.users || []).find(u => u.username === 'admin' || (u.role && u.role.includes('مدير')));
+          if (adm && adm.password && adm.password.length >= 6) pass = adm.password;
+        }
+      } catch (e) {}
+      const cred = await auth.signInWithEmailAndPassword("admin@hossam-erp.com", pass);
       return cred.user;
     } catch (e) {
       console.warn("Firebase ensureAuth error:", e);
@@ -97,16 +106,28 @@ const FDB = {
 
   // Update password in Firebase Auth for currently signed in user
   async updateAuthPassword(newPassword) {
+    if (!newPassword || newPassword.length < 6) {
+      return { success: false, error: 'كلمة المرور يجب ألا تقل عن 6 خانات/أحرف طبقاً لمعايير أمان Firebase' };
+    }
     try {
-      const user = auth.currentUser;
+      let user = auth.currentUser;
+      if (!user) {
+        user = await this.ensureAuth();
+      }
       if (user) {
         await user.updatePassword(newPassword);
         return { success: true };
       }
-      return { success: false, error: 'User not logged in' };
+      return { success: false, error: 'لم يتم العثور على جلسة مستخدم نشطة في Firebase' };
     } catch (error) {
       console.warn('Firebase Auth updatePassword error:', error);
-      return { success: false, error: error.message };
+      if (error.code === 'auth/weak-password') {
+        return { success: false, error: 'كلمة المرور ضعيفة، يجب أن تتكون من 6 أحرف/أرقام على الأقل' };
+      }
+      if (error.code === 'auth/requires-recent-login') {
+        return { success: false, error: 'لأسباب أمنية من Firebase، يرجى تسجيل الخروج والدخول مجدداً بالباسوورد الحالي أولاً قبل تغييره' };
+      }
+      return { success: false, error: error.message || 'فشل تحديث كلمة المرور في Firebase Auth' };
     }
   },
 
