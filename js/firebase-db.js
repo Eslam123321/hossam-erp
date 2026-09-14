@@ -58,7 +58,7 @@ const FDB = {
     try {
       let pass = "01095412229";
       try {
-        const local = localStorage.getItem('hossam_erp_db_v2');
+        const local = localStorage.getItem('HOSSAM_ERP_FIRESTORE_LIVE_V3');
         if (local) {
           const parsed = JSON.parse(local);
           const adm = (parsed.users || []).find(u => u.username === 'admin' || (u.role && u.role.includes('مدير')));

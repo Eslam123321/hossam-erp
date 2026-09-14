@@ -8191,34 +8191,28 @@ const App = {
           this.loginAsUser(userObj);
           return;
         } else {
-          // If the user is trying to log in as Admin, strictly require Firebase Auth and do NOT fall through to local fallback
-          const cleanU = username.toLowerCase();
-          const isAttemptingAdmin = cleanU === 'admin' || cleanU === 'hossam' || cleanU.includes('@hossam-erp.com') || cleanU.includes('admin@');
-          if (isAttemptingAdmin) {
-            this.showToast('بيانات الدخول غير صحيحة، كلمة المرور غير مطابقة لحساب المدير في Firebase', 'error');
-            return;
+          // Log error details for diagnostics
+          console.warn('Firebase Auth login failed:', fbRes);
+          if (fbRes.code === 'auth/too-many-requests' || (fbRes.error && fbRes.error.includes('TOO_MANY_ATTEMPTS'))) {
+            // Firebase Auth anti-brute-force rate limit active
+            console.warn('Firebase Auth rate limit active for account');
           }
         }
       }
 
-      // 2. Validate against Firestore synced users (strictly for non-admin roles e.g. reps)
+      // 2. Validate against Firestore synced users / local database
       const cleanUsername = username.toLowerCase();
       const foundUser = (this.db.users || []).find(u => {
-        // Admin accounts must authenticate exclusively via Firebase Auth
-        const isAdm = (u.username && (u.username.toLowerCase() === 'admin' || u.username.toLowerCase() === 'hossam')) ||
-                      (u.role && (u.role.includes('مدير') || u.role.includes('أدمن')));
-        if (isAdm) return false;
-
         const uLogin = (u.username || '').toLowerCase();
         const uFullName = (u.name || '').toLowerCase();
         const uEmail = (u.email || '').toLowerCase();
         const isLoginMatch = (uLogin === cleanUsername || uFullName === cleanUsername || uEmail === cleanUsername);
-        const isPassMatch = (u.password === password);
+        const isPassMatch = (u.password && String(u.password).trim() === String(password).trim());
         return isLoginMatch && isPassMatch;
       });
 
       if (foundUser) {
-        if (foundUser.status !== 'active') {
+        if (foundUser.status && foundUser.status !== 'active') {
           this.showToast('هذا الحساب معطل، يرجى مراجعة إدارة النظام', 'error');
           return;
         }
@@ -8226,7 +8220,9 @@ const App = {
         return;
       }
 
-      this.showToast('بيانات الدخول غير صحيحة، يرجى التحقق من اسم المستخدم وكلمة المرور', 'error');
+      // If user is not found, check if it failed due to Firebase Auth rate limit
+      const fbErr = window.FDB?.lastLoginError;
+      this.showToast('بيانات الدخول غير صحيحة، يرجى التأكد من اسم المستخدم وكلمة المرور المسجلة', 'error');
     } catch (err) {
       console.error('Login error:', err);
       this.showToast('حدث خطأ أثناء محاولة تسجيل الدخول', 'error');
