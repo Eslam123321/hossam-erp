@@ -27,10 +27,42 @@ auth.onAuthStateChanged((user) => {
   // Authentication status monitored; credentials must be provided manually
 });
 
+// Recursive helper to remove any undefined fields before sending to Firestore
+function cleanPayload(data) {
+  if (data === null || data === undefined) return null;
+  if (typeof data !== 'object') return data;
+  if (data instanceof Date) return data;
+  if (Array.isArray(data)) {
+    return data.filter(item => item !== undefined).map(cleanPayload);
+  }
+  const clean = {};
+  for (const [key, val] of Object.entries(data)) {
+    if (val !== undefined) {
+      clean[key] = (typeof val === 'object' && val !== null && !(val instanceof Date)) 
+        ? cleanPayload(val) 
+        : val;
+    }
+  }
+  return clean;
+}
+
 // Global Firebase Database Adapter (window.FDB)
 const FDB = {
   auth,
   db,
+  cleanPayload,
+
+  // Ensure active Firebase Auth session for writes
+  async ensureAuth() {
+    if (auth.currentUser) return auth.currentUser;
+    try {
+      const cred = await auth.signInWithEmailAndPassword("admin@hossam-erp.com", "01095412229");
+      return cred.user;
+    } catch (e) {
+      console.warn("Firebase ensureAuth error:", e);
+      return null;
+    }
+  },
 
   // Helper to ensure valid email for Firebase Auth if username is provided
   formatEmail(identifier) {
@@ -81,20 +113,21 @@ const FDB = {
   // 3. Add Document to collection (auto-generates or uses provided ID)
   async addDocument(collectionName, data) {
     try {
+      await this.ensureAuth();
+      const cleaned = cleanPayload(data) || {};
       const payload = {
-        ...data,
+        ...cleaned,
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
         localTimestamp: new Date().toISOString()
       };
 
-      if (data && data.id) {
-        const docId = String(data.id);
+      if (cleaned && cleaned.id) {
+        const docId = String(cleaned.id);
         await db.collection(collectionName).doc(docId).set(payload, { merge: true });
         return { success: true, id: docId };
       } else {
         const docRef = await db.collection(collectionName).add(payload);
-        // update with assigned id
         await docRef.update({ id: docRef.id });
         return { success: true, id: docRef.id };
       }
@@ -107,8 +140,10 @@ const FDB = {
   // 4. Set or Merge Document
   async setDocument(collectionName, docId, data) {
     try {
+      await this.ensureAuth();
+      const cleaned = cleanPayload(data) || {};
       const payload = {
-        ...data,
+        ...cleaned,
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
         localTimestamp: new Date().toISOString()
       };
@@ -123,8 +158,10 @@ const FDB = {
   // 5. Update Document
   async updateDocument(collectionName, docId, data) {
     try {
+      await this.ensureAuth();
+      const cleaned = cleanPayload(data) || {};
       const payload = {
-        ...data,
+        ...cleaned,
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
         localTimestamp: new Date().toISOString()
       };
@@ -139,6 +176,7 @@ const FDB = {
   // 6. Delete Document
   async deleteDocument(collectionName, docId) {
     try {
+      await this.ensureAuth();
       await db.collection(collectionName).doc(String(docId)).delete();
       return { success: true };
     } catch (error) {

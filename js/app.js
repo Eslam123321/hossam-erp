@@ -118,6 +118,9 @@ const App = {
 
   init() {
     this.db = window.ERP_DB;
+    if (window.FDB && typeof window.FDB.ensureAuth === 'function') {
+      window.FDB.ensureAuth().catch(() => {});
+    }
     this.sanitizeRepsData();
     this.reconcilePastRepInvoicesStock();
     this.reconcileRepsStats();
@@ -220,18 +223,30 @@ const App = {
 
   reconcilePastRepInvoicesStock() {
     if (!this.db || !Array.isArray(this.db.invoices) || !Array.isArray(this.db.items)) return;
+    let itemsChanged = false;
     this.db.invoices.forEach(inv => {
       const isRep = inv.sellerType === 'مندوب' || (this.db.reps || []).some(r => r.name === inv.sellerName || r.id === inv.sellerId);
-      if (isRep && !inv.warehouseStockDeducted && Array.isArray(inv.items)) {
+      if (isRep && inv.warehouseStockDeducted === false && Array.isArray(inv.items)) {
         inv.items.forEach(it => {
-          const whItem = this.db.items.find(i => i.id === it.id || i.name === it.name);
+          const whItem = this.db.items.find(i => i.id === it.id || String(i.id) === String(it.id) || i.name === it.name);
           if (whItem) {
             whItem.cartonsInStock = Math.max(0, (Number(whItem.cartonsInStock) || 0) - (Number(it.qty) || 0));
+            itemsChanged = true;
+            if (window.FDB && typeof window.FDB.updateDocument === 'function') {
+              window.FDB.updateDocument('items', whItem.id, whItem);
+            }
           }
         });
         inv.warehouseStockDeducted = true;
+        if (window.FDB && typeof window.FDB.updateDocument === 'function') {
+          window.FDB.updateDocument('invoices', inv.id, { warehouseStockDeducted: true });
+        }
       }
     });
+    if (itemsChanged) {
+      this.syncDB();
+      this.requestUIRefresh();
+    }
   },
 
   reconcileRepsStats() {
@@ -2412,7 +2427,7 @@ const App = {
   },
 
   // حفظ الفاتورة رسمياً وتحديث المخزن والعميل والخزينة
-  confirmSaveInvoice(invoiceNo) {
+  async confirmSaveInvoice(invoiceNo) {
     if (this.currentCart.items.length === 0) return;
 
     const grossTotal = this.currentCart.items.reduce((sum, i) => sum + (i.qty * i.price), 0);
@@ -2445,18 +2460,18 @@ const App = {
 
     // 1. Deduct Stock Cartons (Always deduct from main warehouse inventory for all sales)
     this.currentCart.items.forEach(cartItem => {
-      const warehouseItem = this.db.items.find(i => i.id === cartItem.id);
+      const warehouseItem = this.db.items.find(i => i.id === cartItem.id || String(i.id) === String(cartItem.id) || i.name === cartItem.name);
       if (warehouseItem) {
-        warehouseItem.cartonsInStock = Math.max(0, warehouseItem.cartonsInStock - cartItem.qty);
+        warehouseItem.cartonsInStock = Math.max(0, (Number(warehouseItem.cartonsInStock) || 0) - (Number(cartItem.qty) || 0));
       }
     });
 
     if (this.activeRepForPOS) {
       // Deduct from rep's custody
       this.currentCart.items.forEach(cartItem => {
-        const repCustodyItem = this.activeRepForPOS.activeCustody?.find(c => c.itemId === cartItem.id);
+        const repCustodyItem = this.activeRepForPOS.activeCustody?.find(c => c.itemId === cartItem.id || String(c.itemId) === String(cartItem.id) || c.itemName === cartItem.name);
         if (repCustodyItem) {
-          repCustodyItem.cartons = Math.max(0, repCustodyItem.cartons - cartItem.qty);
+          repCustodyItem.cartons = Math.max(0, (Number(repCustodyItem.cartons) || 0) - (Number(cartItem.qty) || 0));
         }
       });
       // Add paid cash to rep's cash in hand
@@ -2540,28 +2555,31 @@ const App = {
 
     this.syncDB();
     if (window.FDB) {
-      window.FDB.addDocument('invoices', newInvoice);
-      if (customer) window.FDB.updateDocument('customers', customer.id, customer);
+      await window.FDB.addDocument('invoices', newInvoice);
+      if (customer) await window.FDB.updateDocument('customers', customer.id, customer);
 
       // Always update warehouse items in Firestore
-      newInvoice.items.forEach(cartItem => {
-        const warehouseItem = this.db.items.find(i => i.id === cartItem.id);
-        if (warehouseItem) window.FDB.updateDocument('items', warehouseItem.id, warehouseItem);
-      });
+      await Promise.all(newInvoice.items.map(async cartItem => {
+        const warehouseItem = this.db.items.find(i => i.id === cartItem.id || String(i.id) === String(cartItem.id) || i.name === cartItem.name);
+        if (warehouseItem) {
+          await window.FDB.updateDocument('items', warehouseItem.id, warehouseItem);
+        }
+      }));
 
       if (this.activeRepForPOS) {
-        window.FDB.updateDocument('reps', this.activeRepForPOS.id, this.activeRepForPOS);
+        await window.FDB.updateDocument('reps', this.activeRepForPOS.id, this.activeRepForPOS);
       } else {
         if (paid > 0 && this.db.treasuryLogs && this.db.treasuryLogs[0]) {
-          window.FDB.addDocument('treasury', this.db.treasuryLogs[0]);
+          await window.FDB.addDocument('treasury', this.db.treasuryLogs[0]);
         }
-        window.FDB.setDocument('settings', 'capital', { capital: this.db.capital, treasury: this.db.treasury });
+        await window.FDB.setDocument('settings', 'capital', { capital: this.db.capital, treasury: this.db.treasury });
       }
     }
     this.closeModal();
     this.showToast(`تم حفظ الفاتورة #${invoiceNo} بنجاح وتحديث حساب العميل والمخزون`);
     this.reconcileAllStats();
-    this.renderPOS();
+    this.updateLiveSidebarStats();
+    this.renderCurrentActiveView();
   },
 
   // ==========================================
@@ -5246,7 +5264,7 @@ const App = {
     // 1. REVERSE OLD INVOICE IMPACT
     // Always restore old items to warehouse stock
     inv.items.forEach(it => {
-      const whItem = (this.db.items || []).find(i => i.id === it.id || i.name === it.name);
+      const whItem = (this.db.items || []).find(i => i.id === it.id || String(i.id) === String(it.id) || i.name === it.name);
       if (whItem) {
         whItem.cartonsInStock = (Number(whItem.cartonsInStock) || 0) + Number(it.qty);
         if (window.FDB) window.FDB.updateDocument('items', whItem.id, whItem);
@@ -5257,7 +5275,7 @@ const App = {
       const oldRep = (this.db.reps || []).find(r => r.name === inv.sellerName);
       if (oldRep && oldRep.activeCustody) {
         inv.items.forEach(it => {
-          const cItem = oldRep.activeCustody.find(c => c.itemId === it.id || c.itemName === it.name);
+          const cItem = oldRep.activeCustody.find(c => c.itemId === it.id || String(c.itemId) === String(it.id) || c.itemName === it.name);
           if (cItem) cItem.cartons = (Number(cItem.cartons) || 0) + Number(it.qty);
         });
         oldRep.currentCash = Math.max(0, (oldRep.currentCash || 0) - inv.paidAmount);
@@ -5285,7 +5303,7 @@ const App = {
     // 2. APPLY NEW INVOICE IMPACT
     // Always deduct new items from warehouse stock
     this.editingInvoice.items.forEach(it => {
-      const whItem = (this.db.items || []).find(i => i.id === it.id || i.name === it.name);
+      const whItem = (this.db.items || []).find(i => i.id === it.id || String(i.id) === String(it.id) || i.name === it.name);
       if (whItem) {
         whItem.cartonsInStock = Math.max(0, (Number(whItem.cartonsInStock) || 0) - Number(it.qty));
         if (window.FDB) window.FDB.updateDocument('items', whItem.id, whItem);
@@ -5419,10 +5437,9 @@ const App = {
 
     // 1. Restore Stock (Always restore to main warehouse inventory)
     items.forEach(item => {
-      const whItem = (this.db.items || []).find(i => i.id === item.id || i.name === item.name);
+      const whItem = (this.db.items || []).find(i => i.id === item.id || String(i.id) === String(item.id) || i.name === item.name);
       if (whItem) {
         whItem.cartonsInStock = (Number(whItem.cartonsInStock) || 0) + (Number(item.qty) || 0);
-        if (window.FDB) window.FDB.updateDocument('items', whItem.id, whItem);
       }
     });
 
@@ -5431,7 +5448,7 @@ const App = {
       if (rep) {
         if (!rep.activeCustody) rep.activeCustody = [];
         items.forEach(item => {
-          const custItem = rep.activeCustody.find(c => c.itemId === item.id || c.itemName === item.name);
+          const custItem = rep.activeCustody.find(c => c.itemId === item.id || String(c.itemId) === String(item.id) || c.itemName === item.name);
           if (custItem) {
             custItem.cartons = (Number(custItem.cartons) || 0) + (Number(item.qty) || 0);
           } else {
@@ -5501,7 +5518,7 @@ const App = {
       window.FDB.deleteDocument('invoices', inv.id);
       if (customer) window.FDB.updateDocument('customers', customer.id, customer);
       items.forEach(item => {
-        const dbItem = this.db.items.find(i => i.id === item.id);
+        const dbItem = this.db.items.find(i => i.id === item.id || String(i.id) === String(item.id) || i.name === item.name);
         if (dbItem) window.FDB.updateDocument('items', dbItem.id, dbItem);
       });
       window.FDB.setDocument('settings', 'capital', { capital: this.db.capital, treasury: this.db.treasury });
@@ -5509,7 +5526,8 @@ const App = {
     this.closeModal();
     this.showToast(`تم حذف الفاتورة #${inv.id} واسترجاع المخزون بنجاح`);
     this.reconcileAllStats();
-    this.renderCurrentPage();
+    this.updateLiveSidebarStats();
+    this.renderCurrentActiveView();
   },
 
   // ==========================================
@@ -8287,6 +8305,11 @@ const App = {
     const idx = (this.db.users || []).findIndex(u => u.id === user.id || u.username === user.username);
     if (idx !== -1) {
       this.db.users[idx] = { ...this.db.users[idx], ...user };
+    }
+
+    // Ensure active Firebase Auth session for cloud writes
+    if (window.FDB && typeof window.FDB.ensureAuth === 'function') {
+      window.FDB.ensureAuth().catch(() => {});
     }
 
     // Ensure realtime listeners and cloud data are refreshed
