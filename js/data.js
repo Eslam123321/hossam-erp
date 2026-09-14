@@ -13,9 +13,20 @@ try {
   const cachedV3 = localStorage.getItem(STORAGE_KEY);
   if (cachedV3) {
     const parsed = JSON.parse(cachedV3);
-    if (parsed && parsed.currentUser) {
-      parsed.currentUser = null;
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+    let changed = false;
+    if (parsed) {
+      if (parsed.currentUser) {
+        parsed.currentUser = null;
+        changed = true;
+      }
+      if (Array.isArray(parsed.users)) {
+        const beforeLen = parsed.users.length;
+        parsed.users = parsed.users.filter(u => u.id !== 'admin_root');
+        if (parsed.users.length !== beforeLen) changed = true;
+      }
+      if (changed) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+      }
     }
   }
 } catch (e) {}

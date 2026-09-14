@@ -76,7 +76,7 @@ const App = {
               updated = true;
             }
             else if (colName === 'reps') { this.db.reps = docs; updated = true; }
-            else if (colName === 'users') { this.db.users = docs; updated = true; }
+            else if (colName === 'users') { this.db.users = docs; this.sanitizeUsersList(); updated = true; }
             else if (colName === 'notifications') { this.db.notifications = docs; updated = true; }
             else if (colName === 'settings') {
               const capitalDoc = docs.find(d => d.id === 'capital');
@@ -93,6 +93,7 @@ const App = {
       });
       if (updated) {
         this.sanitizeRepsData();
+        this.sanitizeUsersList();
         this.reconcilePastRepInvoicesStock();
         this.reconcileRepsStats();
         this.syncDB();
@@ -122,6 +123,7 @@ const App = {
       window.FDB.ensureAuth().catch(() => {});
     }
     this.sanitizeRepsData();
+    this.sanitizeUsersList();
     this.reconcilePastRepInvoicesStock();
     this.reconcileRepsStats();
     this.bindEvents();
@@ -363,6 +365,7 @@ const App = {
     const u6 = window.FDB.initRealtimeSync('users', (users) => {
       if (users && Array.isArray(users)) {
         this.db.users = users;
+        this.sanitizeUsersList();
         this.syncDB();
         if (this.activePage === 'settings') this.renderSettings();
       }
@@ -7363,35 +7366,8 @@ const App = {
     setVal('settings-address', s.address);
     setVal('settings-footer-text', s.receiptFooter);
 
-    // Check for duplicate admin accounts
-    const alertBox = document.getElementById('settings-users-alert-box');
-    if (alertBox) {
-      const adminUsers = (this.db.users || []).filter(u => 
-        (u.role && (u.role.includes('مدير') || u.role.includes('أدمن'))) ||
-        (u.name && u.name.includes('حسام')) ||
-        u.username === 'admin' || u.username === 'hossam'
-      );
-      if (adminUsers.length > 1) {
-        alertBox.style.display = 'block';
-        alertBox.innerHTML = `
-          <div class="admin-merge-alert">
-            <div class="alert-content">
-              <span class="alert-icon">⚠️</span>
-              <div class="alert-text">
-                <strong>تم رصد حسابين لإدارة النظام (${adminUsers.map(a => '@' + a.username).join(' و ')})</strong>
-                <p>تم تسجيل حساب إضافي أثناء تسجيل الدخول من جهاز جديد. يمكنك الاحتفاظ بالحساب الرئيسي ودمج الحسابين بنقرة واحدة.</p>
-              </div>
-            </div>
-            <button type="button" class="btn btn-warning btn-sm" onclick="App.mergeAdminAccounts()" style="white-space: nowrap; font-weight: 700; cursor: pointer;">
-              <span>⚡</span> دمج وتوحيد حسابات الإدارة الآن
-            </button>
-          </div>
-        `;
-      } else {
-        alertBox.style.display = 'none';
-        alertBox.innerHTML = '';
-      }
-    }
+    // Ensure only one clean admin account exists
+    this.sanitizeUsersList();
 
     // Users & Reps Table
     const tbody = document.getElementById('settings-users-tbody');
@@ -7847,75 +7823,40 @@ const App = {
     this.renderSettings();
   },
 
-  async mergeAdminAccounts() {
-    const adminUsers = (this.db.users || []).filter(u => 
-      (u.role && (u.role.includes('مدير') || u.role.includes('أدمن'))) ||
-      (u.name && u.name.includes('حسام')) ||
-      u.username === 'admin' || u.username === 'hossam'
-    );
-    if (adminUsers.length <= 1) {
-      this.showToast('لا توجد حسابات إدارة مكررة حالياً', 'info');
-      return;
-    }
+  sanitizeUsersList() {
+    if (!this.db || !Array.isArray(this.db.users)) return;
 
-    const confirmed = await this.confirmDialog({
-      title: 'دمج وتوحيد حسابات الإدارة',
-      subtitle: 'توحيد حسابات حسام (المدير العام)',
-      message: 'سيتم دمج وتوحيد حسابات الإدارة المكررة في حساب رسمي واحد رئيسي وحذف الحساب الإضافي من السحابة.',
-      icon: '👥',
-      type: 'warning',
-      confirmText: 'نعم، توحيد الحسابات الآن',
-      cancelText: 'إلغاء'
-    });
-    if (!confirmed) return;
+    // 1. Permanently remove legacy admin_root
+    this.db.users = this.db.users.filter(u => u && u.id !== 'admin_root');
 
-    // Pick primary: prefer the one with phone or username === 'admin' or id === 'admin_root'
-    let primary = adminUsers.find(u => u.username === 'admin' || u.id === 'admin_root' || (u.phone && u.phone.length > 5)) || adminUsers[0];
-    const duplicates = adminUsers.filter(u => u.id !== primary.id);
-
-    // Merge missing details if any
-    duplicates.forEach(dup => {
-      if (!primary.phone && dup.phone) primary.phone = dup.phone;
-      if (!primary.email && dup.email) primary.email = dup.email;
-      // Delete duplicate from Firestore
-      if (window.FDB && window.FDB.deleteDocument) {
-        window.FDB.deleteDocument('users', dup.id).catch(() => {});
-      }
+    // 2. Ensure only ONE admin user exists (the Firebase Auth admin with long UID)
+    const adminIndices = [];
+    this.db.users.forEach((u, idx) => {
+      const isAdm = (u.role && (u.role.includes('مدير') || u.role.includes('أدمن'))) ||
+                    (u.name && u.name.includes('حسام')) ||
+                    u.username === 'admin' || u.username === 'hossam';
+      if (isAdm) adminIndices.push(idx);
     });
 
-    primary.name = 'حسام (المدير العام)';
-    primary.role = 'مدير النظام (أدمن)';
-    primary.status = 'active';
-    primary.permissions = [
-      'كافة الصلاحيات',
-      'الخزينة والمصروفات',
-      'الأسعار وسياسة البيع',
-      'المخزون وإدخال الشحنات',
-      'إدارة المستخدمين والإعدادات',
-      'التقارير والأرباح',
-      'نقطة بيع المندوب',
-      'مبيعات المخزن (كاشير)',
-      'سندات قبض وتحصيل',
-      'إدارة العملاء والديون',
-      'إدارة المناديب والعهد'
-    ];
+    if (adminIndices.length > 1) {
+      const currentId = this.db.currentUser?.id;
+      let primaryIdx = adminIndices.find(idx => {
+        const u = this.db.users[idx];
+        return (currentId && u.id === currentId) || (u.id && u.id.length > 20);
+      });
+      if (primaryIdx === undefined) primaryIdx = adminIndices[0];
 
-    if (window.FDB && window.FDB.setDocument) {
-      window.FDB.setDocument('users', primary.id, primary).catch(() => {});
+      const toDelete = adminIndices.filter(idx => idx !== primaryIdx).map(idx => this.db.users[idx]);
+      toDelete.forEach(dup => {
+        if (window.FDB && typeof window.FDB.deleteDocument === 'function') {
+          window.FDB.deleteDocument('users', dup.id).catch(() => {});
+        }
+      });
+
+      const delIds = new Set(toDelete.map(d => d.id));
+      this.db.users = this.db.users.filter(u => !delIds.has(u.id));
+      this.syncDB();
     }
-
-    const dupIds = new Set(duplicates.map(d => d.id));
-    this.db.users = this.db.users.filter(u => !dupIds.has(u.id));
-    const pIdx = this.db.users.findIndex(u => u.id === primary.id);
-    if (pIdx !== -1) {
-      this.db.users[pIdx] = primary;
-    } else {
-      this.db.users.unshift(primary);
-    }
-
-    this.syncDB();
-    this.showToast('تم دمج وتوحيد حساب الإدارة بنجاح وحذف التكرار من السحابة ✓');
-    this.renderSettings();
   },
 
   async deleteUser(userId) {
@@ -8189,9 +8130,9 @@ const App = {
                 this.db.users = firestoreUsers;
                 this.syncDB();
                 userObj = firestoreUsers.find(u => 
+                  u.id === fbRes.user.uid ||
                   (u.email && u.email.toLowerCase() === authEmail) || 
                   (u.username && u.username.toLowerCase() === username.toLowerCase()) ||
-                  u.id === fbRes.user.uid ||
                   (isRootAdmin && (u.username === 'admin' || u.username === 'hossam' || (u.role && u.role.includes('مدير'))))
                 );
               }
@@ -8201,27 +8142,28 @@ const App = {
           }
 
           if (!userObj) {
-            // Check if an admin already exists in the system to prevent duplicates
-            const existingAdmin = (this.db.users || []).find(u => 
-              u.id === 'admin_root' || u.username === 'admin' || (u.role && u.role.includes('مدير'))
-            );
-            if (isRootAdmin && existingAdmin) {
-              userObj = existingAdmin;
-            } else {
-              userObj = {
-                id: fbRes.user.uid,
-                name: isRootAdmin ? 'حسام (المدير العام)' : (fbRes.user.displayName || username),
-                username: username,
-                email: fbRes.user.email,
-                role: isRootAdmin ? 'مدير النظام (أدمن)' : 'مستخدم',
-                status: 'active',
-                permissions: isRootAdmin ? ['كافة الصلاحيات'] : []
-              };
-              if (window.FDB.setDocument) {
-                window.FDB.setDocument('users', userObj.id, userObj).catch(() => {});
-              }
+            userObj = {
+              id: fbRes.user.uid,
+              name: isRootAdmin ? 'حسام (المدير العام)' : (fbRes.user.displayName || username),
+              username: username,
+              email: fbRes.user.email,
+              role: isRootAdmin ? 'مدير النظام (أدمن)' : 'مستخدم',
+              status: 'active',
+              permissions: isRootAdmin ? [
+                'كافة الصلاحيات', 'الخزينة والمصروفات', 'الأسعار وسياسة البيع', 'المخزون وإدخال الشحنات',
+                'إدارة المستخدمين والإعدادات', 'التقارير والأرباح', 'نقطة بيع المندوب', 'مبيعات المخزن (كاشير)',
+                'سندات قبض وتحصيل', 'إدارة العملاء والديون', 'إدارة المناديب والعهد'
+              ] : []
+            };
+            if (window.FDB && window.FDB.setDocument) {
+              window.FDB.setDocument('users', userObj.id, userObj).catch(() => {});
             }
+          } else {
+            userObj.id = fbRes.user.uid;
           }
+
+          // Ensure only this authenticated admin is in the system
+          this.sanitizeUsersList();
 
           if (userObj.status && userObj.status !== 'active') {
             this.showToast('هذا الحساب معطل، يرجى مراجعة إدارة النظام', 'error');
