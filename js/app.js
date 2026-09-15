@@ -289,7 +289,38 @@ const App = {
     });
   },
 
+  reconcileCustomerBalances() {
+    if (!this.db || !Array.isArray(this.db.customers)) return;
+    const invoices = this.db.invoices || [];
+    const treasuryLogs = this.db.treasuryLogs || [];
+
+    this.db.customers.forEach(cust => {
+      const custInvoices = invoices.filter(i => i.customerId === cust.id || i.customerName === cust.name);
+      const custReceipts = treasuryLogs.filter(t => 
+        (t.customerId === cust.id || (t.sourceName && t.sourceName.includes(cust.name))) &&
+        (t.type && (t.type.includes('سند قبض') || t.type.includes('تحصيل')))
+      );
+
+      const totalPurchasesFromInvoices = custInvoices.reduce((sum, i) => sum + (Number(i.grandTotal || i.total) || 0), 0);
+      const totalPaidFromInvoices = custInvoices.reduce((sum, i) => sum + (Number(i.paidAmount) || 0), 0);
+      const totalPaidFromReceipts = custReceipts.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
+
+      if (custInvoices.length > 0 || custReceipts.length > 0) {
+        cust.totalPurchases = totalPurchasesFromInvoices;
+        cust.totalPaid = totalPaidFromInvoices + totalPaidFromReceipts;
+
+        // If total purchases equal total paid, customer debt is strictly 0!
+        if (cust.totalPurchases <= cust.totalPaid) {
+          cust.currentDebt = 0;
+        } else {
+          cust.currentDebt = Math.max(0, cust.totalPurchases - cust.totalPaid);
+        }
+      }
+    });
+  },
+
   reconcileAllStats() {
+    this.reconcileCustomerBalances();
     this.sanitizeRepsData();
     this.reconcileRepsStats();
     this.requestUIRefresh();
@@ -315,7 +346,10 @@ const App = {
     // 2. Customers Realtime Sync
     const u2 = window.FDB.initRealtimeSync('customers', (customers) => {
       if (customers && Array.isArray(customers)) {
-        this.db.customers = customers;
+        const incomingIds = new Set(customers.map(c => String(c.id)));
+        const pendingLocal = (this.db.customers || []).filter(lc => !incomingIds.has(String(lc.id)));
+        this.db.customers = [...customers, ...pendingLocal];
+        this.reconcileCustomerBalances();
         this.syncDB();
         this.showCloudSyncOverlay(false);
         this.updateCloudStatus('online', 'سحابي متصل');
@@ -324,12 +358,15 @@ const App = {
     });
     if (typeof u2 === 'function') this._unsubListeners.push(u2);
 
-    // 3. Invoices Realtime Sync
+    // 3. Invoices Realtime Sync with Smart Merge (never drops pending local invoices)
     const u3 = window.FDB.initRealtimeSync('invoices', (invoices) => {
       if (invoices && Array.isArray(invoices)) {
-        // Sort newest first
-        this.db.invoices = invoices.sort((a, b) => new Date(b.date || b.localTimestamp || 0) - new Date(a.date || a.localTimestamp || 0));
+        const incomingIds = new Set(invoices.map(i => String(i.id)));
+        const pendingLocal = (this.db.invoices || []).filter(li => !incomingIds.has(String(li.id)));
+        const allInvoices = [...invoices, ...pendingLocal];
+        this.db.invoices = allInvoices.sort((a, b) => new Date(b.date || b.localTimestamp || 0) - new Date(a.date || a.localTimestamp || 0));
         this.reconcilePastRepInvoicesStock();
+        this.reconcileCustomerBalances();
         this.syncDB();
         this.showCloudSyncOverlay(false);
         this.updateCloudStatus('online', 'سحابي متصل');
@@ -2242,18 +2279,28 @@ const App = {
             <div style="display: flex; justify-content: space-between; color: #6366f1; font-weight: 900; font-size: 0.96rem; background: rgba(99, 102, 241, 0.07); padding: 4px 8px; border-radius: 6px;">
               <span>إجمالي الدين القديم + الجديد:</span>
               <span>${this.formatMoney(prevDebt + grandTotal)} ج.م</span>
-            </div>
             <div style="display: flex; justify-content: space-between; color: #059669; font-weight: 800;">
               <span>المبلغ المدفوع كاش الآن:</span>
               <span>${this.formatMoney(paid)} ج.م</span>
             </div>
-            <div style="display: flex; justify-content: space-between; color: #dc2626; font-weight: 800;">
-              <span>المتبقي من الفاتورة الجديدة:</span>
-              <span>${this.formatMoney(remaining)} ج.م</span>
-            </div>
+            ${(paid > grandTotal && prevDebt > 0) ? `
+              <div style="display: flex; justify-content: space-between; color: #0284c7; font-weight: 800; background: #f0f9ff; padding: 4px 8px; border-radius: 6px;">
+                <span>تم سداد للفاتورة:</span>
+                <span>${this.formatMoney(Math.min(paid, grandTotal))} ج.م</span>
+              </div>
+              <div style="display: flex; justify-content: space-between; color: #059669; font-weight: 800; background: #ecfdf5; padding: 4px 8px; border-radius: 6px;">
+                <span>تم سداد من الدين السابق:</span>
+                <span>${this.formatMoney(Math.min(prevDebt, paid - grandTotal))} ج.م</span>
+              </div>
+            ` : `
+              <div style="display: flex; justify-content: space-between; color: #dc2626; font-weight: 800;">
+                <span>المتبقي من الفاتورة الجديدة:</span>
+                <span>${this.formatMoney(remaining)} ج.م</span>
+              </div>
+            `}
             <div style="display: flex; justify-content: space-between; color: #b91c1c; font-weight: 900; font-size: 1.1rem; background: #fef2f2; padding: 6px 10px; border-radius: 6px; border: 1px solid #fee2e2;">
               <span>إجمالي الرصيد المتبقي المستحق على العميل:</span>
-              <span>${this.formatMoney(prevDebt + remaining)} ج.م</span>
+              <span>${this.formatMoney(Math.max(0, prevDebt + remaining - (paid > grandTotal ? Math.min(prevDebt, paid - grandTotal) : 0)))} ج.م</span>
             </div>
           </div>
 
@@ -2808,15 +2855,24 @@ const App = {
     }
     if (isNaN(paid)) paid = 0;
 
-    const remaining = Math.max(0, grandTotal - paid);
-    const netProfit = grandTotal - totalCost;
-
     const custName = customer.name;
     const custPhone = customer.phone || '---';
     const prevDebt = Number(customer.currentDebt || 0);
+    const remaining = Math.max(0, grandTotal - paid);
+    const netProfit = grandTotal - totalCost;
+
+    // Smart debt settlement if paid > grandTotal
+    let paidForInvoice = Math.min(paid, grandTotal);
+    let paidFromOldDebt = 0;
+    if (paid > grandTotal && prevDebt > 0) {
+      const extraPaid = paid - grandTotal;
+      paidFromOldDebt = Math.min(prevDebt, extraPaid);
+    }
+    const finalDebt = Math.max(0, prevDebt + remaining - paidFromOldDebt);
+
     const nowDt = this.formatDateTime(new Date());
     const nowStr = nowDt.full;
-    const paymentStatusDesc = remaining > 0 ? (paid > 0 ? 'دفعة جزئية' : 'آجل بالكامل') : 'كاش مسدد بالكامل';
+    const paymentStatusDesc = remaining > 0 ? (paid > 0 ? 'دفعة جزئية' : 'آجل بالكامل') : (paidFromOldDebt > 0 ? 'مسدد بالكامل + سداد دين' : 'كاش مسدد بالكامل');
     const sellerType = this.activeRepForPOS ? 'مندوب' : 'الإدارة (الرئيسية)';
     const sellerName = this.activeRepForPOS ? this.activeRepForPOS.name : (this.db.currentUser?.name || 'حسام حسني');
 
@@ -2842,6 +2898,9 @@ const App = {
       if (remaining > 0) {
         this.activeRepForPOS.assignedDebts = (this.activeRepForPOS.assignedDebts || 0) + remaining;
       }
+      if (paidFromOldDebt > 0) {
+        this.activeRepForPOS.assignedDebts = Math.max(0, (this.activeRepForPOS.assignedDebts || 0) - paidFromOldDebt);
+      }
     } else {
       // Add paid cash directly to Main Treasury
       this.db.treasury = (this.db.treasury || 0) + paid;
@@ -2853,14 +2912,15 @@ const App = {
           sourceName: `${custName} (فاتورة #${invoiceNo})`,
           receivedBy: sellerName,
           amount: paid,
-          notes: `تحصيل نقدي من الفاتورة رقم ${invoiceNo}`
+          notes: paidFromOldDebt > 0 ? `تحصيل من الفاتورة #${invoiceNo} (${this.formatMoney(paidForInvoice)} ج.م) + سداد دين سابق (${this.formatMoney(paidFromOldDebt)} ج.م)` : `تحصيل نقدي من الفاتورة رقم ${invoiceNo}`
         });
       }
       // If customer has an assigned rep, update the assigned debts for that rep
-      if (customer && customer.assignedRepId && remaining > 0) {
+      if (customer && customer.assignedRepId) {
         const assignedRep = this.db.reps.find(r => r.id === customer.assignedRepId);
         if (assignedRep) {
-          assignedRep.assignedDebts = (assignedRep.assignedDebts || 0) + remaining;
+          if (remaining > 0) assignedRep.assignedDebts = (assignedRep.assignedDebts || 0) + remaining;
+          if (paidFromOldDebt > 0) assignedRep.assignedDebts = Math.max(0, (assignedRep.assignedDebts || 0) - paidFromOldDebt);
         }
       }
     }
@@ -2868,7 +2928,7 @@ const App = {
     // 2. Update Customer's record
     customer.totalPurchases = (customer.totalPurchases || 0) + grandTotal;
     customer.totalPaid = (customer.totalPaid || 0) + paid;
-    customer.currentDebt = (customer.currentDebt || 0) + remaining;
+    customer.currentDebt = finalDebt;
 
     // 3. Save to Invoices Log
     const newInvoice = {
@@ -2888,7 +2948,10 @@ const App = {
       discount: discount,
       grandTotal: grandTotal,
       paidAmount: paid,
+      paidForInvoice: paidForInvoice,
+      paidFromOldDebt: paidFromOldDebt,
       remainingAmount: remaining,
+      finalDebt: finalDebt,
       netProfit: netProfit,
       warehouseStockDeducted: true,
       paymentStatus: paymentStatusDesc
@@ -2896,16 +2959,30 @@ const App = {
     this.db.invoices.unshift(newInvoice);
 
     // 4. Create Notification
+    const debtNotes = paidFromOldDebt > 0 ? ` (سدد ${this.formatMoney(paidFromOldDebt)} ج.م من الدين القديم - المتبقي: ${this.formatMoney(finalDebt)} ج.م)` : (remaining > 0 ? ` (متبقي دين: ${this.formatMoney(remaining)} ج.م)` : '');
     this.addNotification({
       title: `فاتورة جديدة #${invoiceNo}`,
-      desc: `تم إصدار فاتورة بقيمة ${this.formatMoney(grandTotal)} ج.م للعميل ${custName} (مدفوع: ${this.formatMoney(paid)} - متبقي دين: ${this.formatMoney(remaining)})`,
+      desc: `تم إصدار فاتورة بقيمة ${this.formatMoney(grandTotal)} ج.م للعميل ${custName} (مدفوع: ${this.formatMoney(paid)} ج.م)${debtNotes}`,
       type: 'invoice'
     });
 
-    // 4.B: Admin Notification if Representative gave a discount
-    const isRepSale = sellerType === 'مندوب' || !!this.activeRepForPOS || (this.db.currentUser && this.db.currentUser.role && this.db.currentUser.role.includes('مندوب'));
+    // 4.B: High Discount Notification (> 50 EGP) - RED indicator in notifications center only
     const allDiscountsGiven = (Number(totalItemDiscounts) || 0) + (Number(discount) || 0);
-    if (isRepSale && allDiscountsGiven > 0) {
+    const isRepSale = sellerType === 'مندوب' || !!this.activeRepForPOS || (this.db.currentUser && this.db.currentUser.role && this.db.currentUser.role.includes('مندوب'));
+    if (allDiscountsGiven > 50) {
+      let discountDetails = [];
+      if (totalItemDiscounts > 0) discountDetails.push(`خصم أصناف: ${this.formatMoney(totalItemDiscounts)} ج.م`);
+      if (discount > 0) discountDetails.push(`خصم فاتورة: ${this.formatMoney(discount)} ج.م`);
+
+      this.addNotification({
+        title: `🔴 تنبيه: خصم مرتفع تجاوز 50 ج.م على الفاتورة #${invoiceNo}`,
+        desc: `قام البائع (${sellerName}) بمنح خصم كبير قدره ${this.formatMoney(allDiscountsGiven)} ج.م (أكبر من 50 ج.م) على الفاتورة #${invoiceNo} للعميل ${custName} (${discountDetails.join('، ')}).`,
+        type: 'danger',
+        isHighDiscount: true,
+        invoiceId: invoiceNo,
+        discountAmount: allDiscountsGiven
+      });
+    } else if (isRepSale && allDiscountsGiven > 0) {
       let discountDetails = [];
       if (totalItemDiscounts > 0) discountDetails.push(`خصم أصناف: ${this.formatMoney(totalItemDiscounts)} ج.م`);
       if (discount > 0) discountDetails.push(`خصم فاتورة: ${this.formatMoney(discount)} ج.م`);
@@ -2915,10 +2992,6 @@ const App = {
         desc: `قام المندوب ${sellerName} بمنح خصم إجمالي قدره ${this.formatMoney(allDiscountsGiven)} ج.م (${discountDetails.join('، ')}) على الفاتورة #${invoiceNo} للعميل ${custName}.`,
         type: 'warning'
       });
-      
-      if (!this.isCurrentUserRep()) {
-        this.showToast(`⚠️ تنبيه: المندوب ${sellerName} منح خصم ${this.formatMoney(allDiscountsGiven)} ج.م على الفاتورة #${invoiceNo}`, 'warning');
-      }
     }
 
     // Reset Cart and update UI immediately
@@ -2936,33 +3009,42 @@ const App = {
 
     this.renderPOSCart();
 
+    // Instant local commit and UI refresh - zero lag, no dropped invoices
     this.syncDB();
-    if (window.FDB) {
-      await window.FDB.addDocument('invoices', newInvoice);
-      if (customer) await window.FDB.updateDocument('customers', customer.id, customer);
-
-      // Always update warehouse items in Firestore
-      await Promise.all(newInvoice.items.map(async cartItem => {
-        const warehouseItem = this.db.items.find(i => i.id === cartItem.id || String(i.id) === String(cartItem.id) || i.name === cartItem.name);
-        if (warehouseItem) {
-          await window.FDB.updateDocument('items', warehouseItem.id, warehouseItem);
-        }
-      }));
-
-      if (this.activeRepForPOS) {
-        await window.FDB.updateDocument('reps', this.activeRepForPOS.id, this.activeRepForPOS);
-      } else {
-        if (paid > 0 && this.db.treasuryLogs && this.db.treasuryLogs[0]) {
-          await window.FDB.addDocument('treasury', this.db.treasuryLogs[0]);
-        }
-        await window.FDB.setDocument('settings', 'capital', { capital: this.db.capital, treasury: this.db.treasury });
-      }
-    }
     this.closeModal();
-    this.showToast(`تم حفظ الفاتورة #${invoiceNo} بنجاح وتحديث حساب العميل والمخزون`);
+    const successMsg = paidFromOldDebt > 0 
+      ? `تم حفظ الفاتورة #${invoiceNo} بنجاح وسداد ${this.formatMoney(paidFromOldDebt)} ج.م من دين العميل`
+      : `تم حفظ الفاتورة #${invoiceNo} بنجاح وتحديث حساب العميل والمخزون`;
+    this.showToast(successMsg);
     this.reconcileAllStats();
     this.updateLiveSidebarStats();
     this.renderCurrentActiveView();
+
+    // Async resilient Firestore background sync
+    if (window.FDB) {
+      (async () => {
+        try {
+          await window.FDB.addDocument('invoices', newInvoice);
+          if (customer) await window.FDB.updateDocument('customers', customer.id, customer);
+          await Promise.all((newInvoice.items || []).map(async cartItem => {
+            const warehouseItem = (this.db.items || []).find(i => i.id === cartItem.id || String(i.id) === String(cartItem.id) || i.name === cartItem.name);
+            if (warehouseItem) {
+              await window.FDB.updateDocument('items', warehouseItem.id, warehouseItem);
+            }
+          }));
+          if (this.activeRepForPOS) {
+            await window.FDB.updateDocument('reps', this.activeRepForPOS.id, this.activeRepForPOS);
+          } else {
+            if (paid > 0 && this.db.treasuryLogs && this.db.treasuryLogs[0]) {
+              await window.FDB.addDocument('treasury', this.db.treasuryLogs[0]);
+            }
+            await window.FDB.setDocument('settings', 'capital', { capital: this.db.capital, treasury: this.db.treasury });
+          }
+        } catch (syncErr) {
+          console.warn('Background invoice cloud sync error:', syncErr);
+        }
+      })();
+    }
   },
 
   // ==========================================
@@ -5425,13 +5507,24 @@ const App = {
               <span>المبلغ المدفوع كاش الآن:</span>
               <span>${this.formatMoney(paid)} ج.م</span>
             </div>
-            <div style="display: flex; justify-content: space-between; color: #dc2626; font-weight: 800;">
-              <span>المتبقي من الفاتورة الجديدة:</span>
-              <span>${this.formatMoney(remaining)} ج.م</span>
-            </div>
+            ${(Number(inv.paidFromOldDebt) || 0) > 0 ? `
+              <div style="display: flex; justify-content: space-between; color: #0284c7; font-weight: 800; background: #f0f9ff; padding: 4px 8px; border-radius: 6px;">
+                <span>تم سداد للفاتورة:</span>
+                <span>${this.formatMoney(inv.paidForInvoice || (paid - inv.paidFromOldDebt))} ج.م</span>
+              </div>
+              <div style="display: flex; justify-content: space-between; color: #059669; font-weight: 800; background: #ecfdf5; padding: 4px 8px; border-radius: 6px;">
+                <span>تم سداد من الدين السابق:</span>
+                <span>${this.formatMoney(inv.paidFromOldDebt)} ج.م</span>
+              </div>
+            ` : `
+              <div style="display: flex; justify-content: space-between; color: #dc2626; font-weight: 800;">
+                <span>المتبقي من الفاتورة الجديدة:</span>
+                <span>${this.formatMoney(remaining)} ج.م</span>
+              </div>
+            `}
             <div style="display: flex; justify-content: space-between; color: #b91c1c; font-weight: 900; font-size: 1.1rem; background: #fef2f2; padding: 6px 10px; border-radius: 6px; border: 1px solid #fee2e2;">
               <span>إجمالي الرصيد المتبقي المستحق على العميل:</span>
-              <span>${this.formatMoney(prevDebt + remaining)} ج.م</span>
+              <span>${this.formatMoney(inv.finalDebt !== undefined ? inv.finalDebt : (prevDebt + remaining - (Number(inv.paidFromOldDebt) || 0)))} ج.م</span>
             </div>
           </div>
 
@@ -7159,13 +7252,22 @@ const App = {
       if (n.type === 'alert') { icon = '⚠️'; iconBg = 'linear-gradient(135deg, #ef4444 0%, #b91c1c 100%)'; }
       if (n.type === 'treasury') { icon = '🏦'; iconBg = 'var(--gold-gradient)'; }
 
+      const isHighDiscount = n.isHighDiscount || (n.title && n.title.includes('خصم مرتفع')) || (n.desc && n.desc.includes('تجاوز 50 ج.م'));
+      if (isHighDiscount) {
+        icon = '🔴';
+        iconBg = 'linear-gradient(135deg, #ef4444 0%, #b91c1c 100%)';
+      }
+
       return `
-        <div class="notif-card ${!n.read ? 'unread' : ''}">
+        <div class="notif-card ${!n.read ? 'unread' : ''}" style="${isHighDiscount ? 'border: 2px solid #ef4444; background: rgba(239, 68, 68, 0.08);' : ''}">
           <div class="notif-icon-box" style="background: ${iconBg}; color: #fff;">
             ${icon}
           </div>
           <div class="notif-content">
-            <div class="notif-title">${n.title}</div>
+            <div class="notif-title" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+              ${n.title}
+              ${isHighDiscount ? '<span style="background: #ef4444; color: #ffffff; font-size: 0.72rem; padding: 2px 8px; border-radius: 999px; font-weight: 800; display: inline-flex; align-items: center; gap: 4px;">🔴 خصم تجاوز 50 ج.م</span>' : ''}
+            </div>
             <div class="notif-desc">${n.desc}</div>
             <div class="notif-time">${this.getNotificationTimeDisplay(n)}</div>
           </div>
@@ -8690,102 +8792,33 @@ const App = {
 
     if (submitBtn) {
       submitBtn.disabled = true;
-      submitBtn.innerHTML = `<span>⏳</span> جاري التحقق من الحساب عبر Firebase...`;
+      submitBtn.innerHTML = `<span>⏳</span> جاري التحقق من الحساب...`;
     }
 
     try {
-      // 1. Direct Authentication via Firebase Auth
-      if (window.FDB) {
-        const fbRes = await window.FDB.login(username, password);
-        if (fbRes.success && fbRes.user) {
-          const authEmail = (fbRes.user.email || '').toLowerCase();
-          let userObj = (this.db.users || []).find(u => 
-            (u.email && u.email.toLowerCase() === authEmail) || 
-            (u.username && u.username.toLowerCase() === username.toLowerCase()) ||
-            u.id === fbRes.user.uid
-          );
-
-          const isRootAdmin = authEmail.includes('admin') || username.toLowerCase() === 'admin' || username.toLowerCase() === 'hossam' || authEmail.includes('hossam');
-
-          // If not found in local cache, query Firestore directly before creating a new user document
-          if (!userObj && window.FDB && window.FDB.db) {
-            try {
-              const snap = await window.FDB.db.collection('users').get();
-              const firestoreUsers = [];
-              snap.forEach(doc => firestoreUsers.push({ id: doc.id, ...doc.data() }));
-              if (firestoreUsers.length > 0) {
-                this.db.users = firestoreUsers;
-                this.syncDB();
-                userObj = firestoreUsers.find(u => 
-                  u.id === fbRes.user.uid ||
-                  (u.email && u.email.toLowerCase() === authEmail) || 
-                  (u.username && u.username.toLowerCase() === username.toLowerCase()) ||
-                  (isRootAdmin && (u.username === 'admin' || u.username === 'hossam' || (u.role && u.role.includes('مدير'))))
-                );
-              }
-            } catch (err) {
-              console.warn('Direct Firestore users lookup error:', err);
-            }
-          }
-
-          if (!userObj) {
-            userObj = {
-              id: fbRes.user.uid,
-              name: isRootAdmin ? 'حسام (المدير العام)' : (fbRes.user.displayName || username),
-              username: username,
-              email: fbRes.user.email,
-              role: isRootAdmin ? 'مدير النظام (أدمن)' : 'مستخدم',
-              status: 'active',
-              permissions: isRootAdmin ? [
-                'كافة الصلاحيات', 'الخزينة والمصروفات', 'الأسعار وسياسة البيع', 'المخزون وإدخال الشحنات',
-                'إدارة المستخدمين والإعدادات', 'التقارير والأرباح', 'نقطة بيع المندوب', 'مبيعات المخزن (كاشير)',
-                'سندات قبض وتحصيل', 'إدارة العملاء والديون', 'إدارة المناديب والعهد'
-              ] : []
-            };
-            if (window.FDB && window.FDB.setDocument) {
-              window.FDB.setDocument('users', userObj.id, userObj).catch(() => {});
-            }
-          } else {
-            userObj.id = fbRes.user.uid;
-          }
-
-          // Ensure only this authenticated admin is in the system
-          this.sanitizeUsersList();
-
-          if (userObj.status && userObj.status !== 'active') {
-            this.showToast('هذا الحساب معطل، يرجى مراجعة إدارة النظام', 'error');
-            return;
-          }
-
-          this.loginAsUser(userObj);
-          return;
-        } else {
-          // Log error details for diagnostics
-          console.warn('Firebase Auth login failed:', fbRes);
-          if (fbRes.code === 'auth/too-many-requests' || (fbRes.error && fbRes.error.includes('TOO_MANY_ATTEMPTS'))) {
-            // Firebase Auth anti-brute-force rate limit active
-            console.warn('Firebase Auth rate limit active for account');
-          }
-        }
+      // 1. Ensure cloud connectivity bridge is active
+      if (window.FDB && typeof window.FDB.ensureAuth === 'function') {
+        await window.FDB.ensureAuth().catch(() => {});
       }
 
-      // 2. Validate against Firestore synced users / local database
       const cleanUsername = username.toLowerCase();
-      let foundUser = (this.db.users || []).find(u => {
-        const uLogin = (u.username || '').toLowerCase();
-        const uFullName = (u.name || '').toLowerCase();
-        const uEmail = (u.email || '').toLowerCase();
-        const isLoginMatch = (uLogin === cleanUsername || uFullName === cleanUsername || uEmail === cleanUsername);
-        const isPassMatch = (u.password && String(u.password).trim() === String(password).trim());
-        return isLoginMatch && isPassMatch;
-      });
 
-      // 3. If user is not yet in local cache (fresh phone / clear cache / new employee), pull live users from Firestore
-      if (!foundUser && window.FDB && window.FDB.db) {
+      // Helper to find matching user in a users list
+      const findMatchingUser = (usersList) => {
+        return (usersList || []).find(u => {
+          const uLogin = (u.username || '').toLowerCase();
+          const uFullName = (u.name || '').toLowerCase();
+          const uEmail = (u.email || '').toLowerCase();
+          return (uLogin === cleanUsername || uFullName === cleanUsername || uEmail === cleanUsername);
+        });
+      };
+
+      // 2. Look up user account in local DB or fresh from Firestore
+      let targetUser = findMatchingUser(this.db.users);
+
+      // If not found locally (or on fresh mobile load), fetch live users from Firestore
+      if (!targetUser && window.FDB && window.FDB.db) {
         try {
-          if (typeof window.FDB.ensureAuth === 'function') {
-            await window.FDB.ensureAuth().catch(() => {});
-          }
           const snap = await window.FDB.db.collection('users').get();
           const firestoreUsers = [];
           snap.forEach(doc => firestoreUsers.push({ id: doc.id, ...doc.data() }));
@@ -8793,31 +8826,65 @@ const App = {
             this.db.users = firestoreUsers;
             this.sanitizeUsersList();
             this.syncDB();
-            foundUser = firestoreUsers.find(u => {
-              const uLogin = (u.username || '').toLowerCase();
-              const uFullName = (u.name || '').toLowerCase();
-              const uEmail = (u.email || '').toLowerCase();
-              const isLoginMatch = (uLogin === cleanUsername || uFullName === cleanUsername || uEmail === cleanUsername);
-              const isPassMatch = (u.password && String(u.password).trim() === String(password).trim());
-              return isLoginMatch && isPassMatch;
-            });
+            targetUser = findMatchingUser(firestoreUsers);
           }
-        } catch (liveErr) {
-          console.warn('Live Firestore users fetch error during login:', liveErr);
+        } catch (fErr) {
+          console.warn('Live Firestore users fetch error:', fErr);
         }
       }
 
-      if (foundUser) {
-        if (foundUser.status && foundUser.status !== 'active') {
+      // 3. STRICT PASSWORD VALIDATION: The password in Firestore is the Single Source of Truth
+      // This prevents old passwords from ever working after a password has been updated
+      if (targetUser) {
+        const storedPassword = String(targetUser.password || '').trim();
+        const inputPassword = String(password).trim();
+
+        if (storedPassword !== inputPassword) {
+          this.showToast('كلمة المرور غير صحيحة، يرجى إدخال أحدث كلمة مرور تم تعيينها للحساب', 'error');
+          return;
+        }
+
+        if (targetUser.status && targetUser.status !== 'active') {
           this.showToast('هذا الحساب معطل، يرجى مراجعة إدارة النظام', 'error');
           return;
         }
-        this.loginAsUser(foundUser);
+
+        // Login successful with verified latest password
+        this.loginAsUser(targetUser);
         return;
       }
 
-      // If user is not found, show friendly toast
-      this.showToast('بيانات الدخول غير صحيحة، يرجى التأكد من اسم المستخدم وكلمة المرور المسجلة', 'error');
+      // 4. Initial fallback for admin if users collection is empty
+      if (cleanUsername === 'admin' || cleanUsername.includes('admin@hossam-erp.com')) {
+        if (window.FDB) {
+          const fbRes = await window.FDB.login(username, password);
+          if (fbRes.success && fbRes.user) {
+            const adminObj = {
+              id: fbRes.user.uid,
+              name: 'حسام (المدير العام)',
+              username: 'admin',
+              email: fbRes.user.email || 'admin@hossam-erp.com',
+              password: password,
+              role: 'مدير النظام (أدمن)',
+              status: 'active',
+              permissions: [
+                'كافة الصلاحيات', 'الخزينة والمصروفات', 'الأسعار وسياسة البيع', 'المخزون وإدخال الشحنات',
+                'إدارة المستخدمين والإعدادات', 'التقارير والأرباح', 'نقطة بيع المندوب', 'مبيعات المخزن (كاشير)',
+                'سندات قبض وتحصيل', 'إدارة العملاء والديون', 'إدارة المناديب والعهد'
+              ]
+            };
+            this.db.users.push(adminObj);
+            this.syncDB();
+            if (window.FDB.setDocument) {
+              window.FDB.setDocument('users', adminObj.id, adminObj).catch(() => {});
+            }
+            this.loginAsUser(adminObj);
+            return;
+          }
+        }
+      }
+
+      this.showToast('بيانات الدخول غير صحيحة، يرجى التأكد من اسم المستخدم وكلمة المرور', 'error');
     } catch (err) {
       console.error('Login error:', err);
       this.showToast('حدث خطأ أثناء محاولة تسجيل الدخول', 'error');
@@ -8829,7 +8896,7 @@ const App = {
     }
   },
 
-  loginAsUser(user) {
+    loginAsUser(user) {
     const isHossamOrAdmin = user.id === 'user_1' || 
                             user.id === 'admin_root' ||
                             (user.name && user.name.includes('حسام')) || 

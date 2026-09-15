@@ -15,10 +15,6 @@ try {
     const parsed = JSON.parse(cachedV3);
     let changed = false;
     if (parsed) {
-      if (parsed.currentUser) {
-        parsed.currentUser = null;
-        changed = true;
-      }
       if (Array.isArray(parsed.users)) {
         const beforeLen = parsed.users.length;
         parsed.users = parsed.users.filter(u => u.id !== 'admin_root');
@@ -65,7 +61,7 @@ class DBManager {
         return {
           ...defaultDatabase,
           ...parsed,
-          currentUser: null, // Always require manual authentication on load/refresh
+          currentUser: (parsed.currentUser && parsed.currentUser.username) ? parsed.currentUser : null,
           capital: typeof parsed.capital === 'number' ? parsed.capital : 0,
           items: Array.isArray(parsed.items) ? parsed.items : [],
           customers: Array.isArray(parsed.customers) ? parsed.customers : [],
