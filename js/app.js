@@ -693,6 +693,73 @@ const App = {
     return Number(num).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
   },
 
+  // تنسيق موحد ونظيف للتاريخ والوقت لمنع أي تشوه في نصوص Canvas والطباعة
+  formatDateTime(input) {
+    if (!input) input = new Date();
+    let d = null;
+    if (input instanceof Date) {
+      d = input;
+    } else if (typeof input === 'number') {
+      d = new Date(input);
+    } else if (typeof input === 'string') {
+      const tryDate = new Date(input);
+      if (!isNaN(tryDate.getTime())) {
+        d = tryDate;
+      } else {
+        const clean = input.replace(/[\u200E\u200F\u061C]/g, '').trim();
+        let m = clean.match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+        let year, month, day;
+        if (m) {
+          year = parseInt(m[1], 10);
+          month = parseInt(m[2], 10) - 1;
+          day = parseInt(m[3], 10);
+        } else {
+          m = clean.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+          if (m) {
+            day = parseInt(m[1], 10);
+            month = parseInt(m[2], 10) - 1;
+            year = parseInt(m[3], 10);
+          }
+        }
+        const tm = clean.match(/(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?\s*([صمAPMapm])?/);
+        let hours = 12, minutes = 0, seconds = 0;
+        if (tm) {
+          hours = parseInt(tm[1], 10);
+          minutes = parseInt(tm[2], 10);
+          seconds = tm[3] ? parseInt(tm[3], 10) : 0;
+          const period = tm[4];
+          if (period === 'م' || period === 'P' || period === 'PM' || period === 'pm') {
+            if (hours < 12) hours += 12;
+          } else if (period === 'ص' || period === 'A' || period === 'AM' || period === 'am') {
+            if (hours === 12) hours = 0;
+          }
+        }
+        if (year && month !== undefined && day) {
+          d = new Date(year, month, day, hours, minutes, seconds);
+        }
+      }
+    }
+    if (!d || isNaN(d.getTime())) d = new Date();
+
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    let h = d.getHours();
+    const min = String(d.getMinutes()).padStart(2, '0');
+    const sec = String(d.getSeconds()).padStart(2, '0');
+    const period = h >= 12 ? 'م' : 'ص';
+    h = h % 12 || 12;
+    const hStr = String(h).padStart(2, '0');
+
+    return {
+      dateOnly: `${y}/${m}/${day}`,
+      timeOnly: `${hStr}:${min}:${sec} ${period}`,
+      timeShort: `${hStr}:${min} ${period}`,
+      full: `${y}/${m}/${day} ${hStr}:${min}:${sec} ${period}`,
+      fullShort: `${y}/${m}/${day} ${hStr}:${min} ${period}`
+    };
+  },
+
   showToast(message, type = 'success') {
     let container = document.getElementById('toast-container');
     if (!container) {
@@ -1907,7 +1974,7 @@ const App = {
     const custName = customer.name;
     const prevDebt = Number(customer.currentDebt || 0);
     const invoiceNo = `INV-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
-    const nowStr = new Date().toLocaleString('ar-EG-u-nu-latn');
+    const nowStr = this.formatDateTime(new Date()).full;
     const seller = this.activeRepForPOS ? this.activeRepForPOS.name : (this.db.currentUser?.name || 'حسام حسني');
     const paymentMethodText = remaining > 0 ? (paid > 0 ? 'دفعة جزئية' : 'آجل بالكامل') : 'كاش مسدد بالكامل';
 
@@ -2081,8 +2148,8 @@ const App = {
         const paid = this.currentCart.paidAmount !== undefined ? this.currentCart.paidAmount : 0;
         inv = {
           id: invInput,
-          date: new Date().toLocaleDateString('ar-EG-u-nu-latn'),
-          dateTime: new Date().toLocaleString('ar-EG-u-nu-latn'),
+          date: this.formatDateTime(new Date()).dateOnly,
+          dateTime: this.formatDateTime(new Date()).full,
           customerId: customer ? customer.id : null,
           customerName: customer ? customer.name : '',
           customerPhone: customer ? customer.phone : '',
@@ -2175,20 +2242,26 @@ const App = {
     ctx.fillText(inv.customerName || 'عميل مسجل', width - 125, 144);
 
     // Left Column
-    ctx.textAlign = 'left';
+    ctx.textAlign = 'right';
     ctx.font = '12px Cairo, sans-serif';
     ctx.fillStyle = '#64748b';
-    ctx.fillText('التاريخ والوقت:', 170, 122);
-    ctx.fillStyle = '#0f172a';
-    ctx.font = 'bold 11px Cairo, sans-serif';
-    ctx.fillText(inv.dateTime || inv.date || '', 25, 122);
+    ctx.fillText('التاريخ والوقت:', 245, 122);
 
-    ctx.font = '12px Cairo, sans-serif';
+    const dtObj = this.formatDateTime(inv.dateTime || inv.date || new Date());
+    ctx.save();
+    ctx.direction = 'ltr';
+    ctx.textAlign = 'right';
+    ctx.font = 'bold 11px Cairo, sans-serif';
+    ctx.fillStyle = '#0f172a';
+    ctx.fillText(dtObj.full, 168, 122);
+    ctx.restore();
+
     ctx.fillStyle = '#64748b';
-    ctx.fillText('طريقة الدفع:', 170, 144);
+    ctx.font = '12px Cairo, sans-serif';
+    ctx.fillText('طريقة الدفع:', 245, 144);
     ctx.fillStyle = remaining > 0 ? '#ea580c' : '#16a34a';
     ctx.font = 'bold 12px Cairo, sans-serif';
-    ctx.fillText(paymentMethodText, 25, 144);
+    ctx.fillText(paymentMethodText, 178, 144);
 
     // Table Header
     ctx.fillStyle = '#f8fafc';
@@ -2583,7 +2656,8 @@ const App = {
     const custName = customer.name;
     const custPhone = customer.phone || '---';
     const prevDebt = Number(customer.currentDebt || 0);
-    const nowStr = new Date().toLocaleString('ar-EG-u-nu-latn');
+    const nowDt = this.formatDateTime(new Date());
+    const nowStr = nowDt.full;
     const paymentStatusDesc = remaining > 0 ? (paid > 0 ? 'دفعة جزئية' : 'آجل بالكامل') : 'كاش مسدد بالكامل';
     const sellerType = this.activeRepForPOS ? 'مندوب' : 'الإدارة (الرئيسية)';
     const sellerName = this.activeRepForPOS ? this.activeRepForPOS.name : (this.db.currentUser?.name || 'حسام حسني');
@@ -2641,7 +2715,7 @@ const App = {
     // 3. Save to Invoices Log
     const newInvoice = {
       id: invoiceNo,
-      date: new Date().toISOString().replace('T', ' ').substring(0, 16),
+      date: nowDt.dateOnly,
       dateTime: nowStr,
       customerId: customer.id,
       customerName: custName,
@@ -5081,7 +5155,7 @@ const App = {
     const customer = inv.customerId ? (this.db.customers || []).find(c => c.id === inv.customerId) : null;
     const prevDebt = inv.previousDebt !== undefined ? Number(inv.previousDebt) : (customer ? Number(customer.currentDebt || 0) : 0);
     const paymentMethodText = remaining > 0 ? (paid > 0 ? 'دفعة جزئية' : 'آجل بالكامل') : 'كاش مسدد بالكامل';
-    const dateTimeStr = inv.dateTime || inv.date || new Date().toLocaleString('ar-EG-u-nu-latn');
+    const dateTimeStr = this.formatDateTime(inv.dateTime || inv.date || new Date()).full;
     const seller = inv.sellerName || (this.db.currentUser?.name || 'حسام حسني');
 
     const modalHtml = `
@@ -6567,11 +6641,18 @@ const App = {
     // Receipt Meta
     let currentY = 180;
     ctx.font = 'bold 13px Cairo, sans-serif';
-    ctx.fillStyle = '#0f172a';
+    ctx.direction = 'rtl';
     ctx.textAlign = 'right';
     ctx.fillText(`رقم السند: #${log.id}`, width - 35, currentY);
-    ctx.textAlign = 'left';
-    ctx.fillText(`التاريخ: ${log.date}`, 35, currentY);
+
+    const receiptDt = this.formatDateTime(log.date || log.localTimestamp || new Date());
+    ctx.fillText('التاريخ:', 230, currentY);
+    ctx.save();
+    ctx.direction = 'ltr';
+    ctx.textAlign = 'right';
+    ctx.font = 'bold 12px Cairo, sans-serif';
+    ctx.fillText(receiptDt.full, 185, currentY);
+    ctx.restore();
 
     // Separator
     currentY += 15;
