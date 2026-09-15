@@ -319,11 +319,22 @@
         <div class="dashboard-grid-sections">
           <!-- Recent Invoices Table -->
           <div class="glass-panel">
-            <div class="panel-header">
+            <div class="panel-header" style="flex-wrap: wrap; gap: 10px;">
               <div class="panel-title">
                 <span>🧾</span> آخر فواتير المبيعات الصادرة
               </div>
-              <button class="btn btn-secondary btn-sm" onclick="App.navigateTo('reports')">عرض كل الفواتير</button>
+              <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+                <select id="dash-seller-filter" class="custom-select" style="width: auto; min-width: 135px; padding: 4px 10px; font-size: 0.8rem;" onchange="App.renderDashboardRecentInvoices()" title="تصفية حسب البائع">
+                  <option value="all">كل البائعين</option>
+                  <option value="admin">حسام (الرئيسي)</option>
+                </select>
+                <select id="dash-period-filter" class="custom-select" style="width: auto; min-width: 120px; padding: 4px 10px; font-size: 0.8rem;" onchange="App.renderDashboardRecentInvoices()" title="تصفية حسب الفترة الزمنية">
+                  <option value="all">كل الفترات</option>
+                  <option value="today">اليوم</option>
+                  <option value="month">هذا الشهر</option>
+                </select>
+                <button class="btn btn-secondary btn-sm" onclick="App.navigateTo('reports')">عرض كل الفواتير</button>
+              </div>
             </div>
             <div class="table-responsive">
               <table class="modern-table">
@@ -386,6 +397,12 @@
               <div class="pos-search-box" style="width: 100%;">
                 <input type="text" id="pos-search-input" class="form-control" placeholder="🔍 ابحث عن صنف سجاير بالاسم أو امسح الباركود..." oninput="App.renderPOSCatalog()">
               </div>
+              <div class="pos-category-pills" style="display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap;">
+                <button type="button" class="btn btn-sm pos-cat-btn active" id="pos-cat-all" onclick="App.setPOSCategory('all', this)" style="padding: 4px 14px; font-weight: 700; border-radius: 20px;">الكل</button>
+                <button type="button" class="btn btn-sm pos-cat-btn" id="pos-cat-local" onclick="App.setPOSCategory('محلي', this)" style="padding: 4px 14px; font-weight: 700; border-radius: 20px;">محلي</button>
+                <button type="button" class="btn btn-sm pos-cat-btn" id="pos-cat-foreign" onclick="App.setPOSCategory('أجنبي', this)" style="padding: 4px 14px; font-weight: 700; border-radius: 20px;">أجنبي</button>
+                <button type="button" class="btn btn-sm pos-cat-btn" id="pos-cat-imported" onclick="App.setPOSCategory('مستورد', this)" style="padding: 4px 14px; font-weight: 700; border-radius: 20px;">مستورد</button>
+              </div>
             </div>
 
             <!-- Products Grid Cards -->
@@ -398,7 +415,7 @@
               <h3>
                 <span>🛒</span> فاتورة البيع
               </h3>
-              <span class="invoice-no-pill">قروصة / ج.م</span>
+              <span class="invoice-no-pill" id="pos-cart-badge">0 صنف</span>
             </div>
 
             <!-- Customer Selection -->
@@ -511,7 +528,15 @@
             <div style="flex: 1; min-width: 250px;">
               <input type="text" id="inventory-search-input" class="form-control" placeholder="🔍 ابحث باسم الصنف أو الباركود..." oninput="App.renderInventory()">
             </div>
-            <div style="width: 200px;">
+            <div style="width: 170px;">
+              <select id="inventory-filter-category" class="custom-select" onchange="App.renderInventory()">
+                <option value="all">جميع التصنيفات</option>
+                <option value="محلي">محلي</option>
+                <option value="أجنبي">أجنبي</option>
+                <option value="مستورد">مستورد</option>
+              </select>
+            </div>
+            <div style="width: 180px;">
               <select id="inventory-filter-status" class="custom-select" onchange="App.renderInventory()">
                 <option value="all">جميع الحالات</option>
                 <option value="available">متوفر بالمخزن</option>
@@ -529,6 +554,7 @@
               <thead>
                 <tr>
                   <th>الصنف</th>
+                  <th>التصنيف</th>
                   <th>الباركود</th>
                   <th>المخزون (قروصة)</th>
                   <th>سعر الشراء</th>
@@ -692,11 +718,17 @@
             <div style="flex: 1; min-width: 250px;">
               <input type="text" id="reports-search-input" class="form-control" placeholder="🔍 فلتر برقم الفاتورة أو رقم السند (TR) أو اسم العميل أو المندوب..." oninput="App.filterReportsData()">
             </div>
-            <div style="width: 230px;">
-              <select id="reports-period-filter" class="custom-select" onchange="App.filterReportsData()">
+            <div style="width: 180px;">
+              <select id="reports-period-filter" class="custom-select" onchange="App.filterReportsData()" title="فلتر الفترات الزمنية">
                 <option value="all">كل الفترات الزمنية</option>
                 <option value="today">اليومية (اليوم)</option>
                 <option value="month">الشهرية (هذا الشهر)</option>
+              </select>
+            </div>
+            <div style="width: 190px;">
+              <select id="reports-seller-filter" class="custom-select" onchange="App.filterReportsData()" title="فلتر البائع">
+                <option value="all">كل البائعين (الكل)</option>
+                <option value="admin">حسام (الرئيسي)</option>
               </select>
             </div>
           </div>

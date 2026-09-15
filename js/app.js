@@ -1006,45 +1006,17 @@ const App = {
     const lowStockEl = document.getElementById('dash-low-stock');
     if (lowStockEl) lowStockEl.textContent = lowStockCount;
 
-    // Render Recent Invoices in Dashboard
-    const recentInvoicesTable = document.getElementById('dash-recent-invoices');
-    if (recentInvoicesTable) {
-      const recent = this.db.invoices.slice(0, 5);
-      if (recent.length === 0) {
-        recentInvoicesTable.innerHTML = `<tr><td colspan="7" class="text-center" style="text-align:center; padding: 20px; color: var(--text-muted);">لا توجد فواتير بعد</td></tr>`;
-      } else {
-        recentInvoicesTable.innerHTML = recent.map(inv => `
-          <tr>
-            <td><strong style="color: var(--gold);">${inv.id}</strong></td>
-            <td>${inv.customerName}</td>
-            <td>
-              <span class="badge-status blue" style="font-weight: 700; font-size: 0.8rem; white-space: nowrap;">
-                ${(inv.items || []).length} صنف (${(inv.items || []).reduce((s, it) => s + Number(it.qty || 0), 0)} قروصة)
-              </span>
-            </td>
-            <td>${inv.sellerName}</td>
-            <td><strong>${this.formatMoney(inv.grandTotal)} ج.م</strong></td>
-            <td>
-              <span class="badge-status ${inv.remainingAmount > 0 ? 'warning' : 'success'}">
-                ${inv.remainingAmount > 0 ? `أجل (${this.formatMoney(inv.remainingAmount)})` : 'كاش مسدد'}
-              </span>
-            </td>
-            <td class="table-actions-cell">
-              <div class="table-actions-row">
-                <button class="btn btn-secondary btn-sm" onclick="App.viewInvoiceModal('${inv.id}')" title="معاينة الفاتورة">
-                  معاينة
-                </button>
-                <button class="btn btn-primary btn-sm" onclick="App.openEditInvoiceModal('${inv.id}')" title="تعديل الفاتورة">
-                  ✏️ تعديل
-                </button>
-                <button class="btn btn-danger btn-sm" onclick="App.deleteInvoice('${inv.id}')" title="حذف الفاتورة">
-                  🗑️ حذف
-                </button>
-              </div>
-            </td>
-          </tr>
-        `).join('');
-      }
+    // Populate seller filter in Dashboard
+    const dashSellerFilterEl = document.getElementById('dash-seller-filter');
+    if (dashSellerFilterEl) {
+      const prevVal = dashSellerFilterEl.value || 'all';
+      dashSellerFilterEl.innerHTML = `
+        <option value="all" ${prevVal === 'all' ? 'selected' : ''}>كل البائعين</option>
+        <option value="admin" ${prevVal === 'admin' ? 'selected' : ''}>حسام (الرئيسي)</option>
+        ${(this.db.reps || []).map(r => `
+          <option value="${r.name}" ${prevVal === r.name ? 'selected' : ''}>${r.name}</option>
+        `).join('')}
+      `;
     }
 
     // Render Stock alerts list in Dashboard
@@ -1066,6 +1038,65 @@ const App = {
           </div>
         `).join('');
       }
+    }
+
+    // Render Recent Invoices in Dashboard with active filters
+    this.renderDashboardRecentInvoices();
+  },
+
+  renderDashboardRecentInvoices() {
+    const recentInvoicesTable = document.getElementById('dash-recent-invoices');
+    if (!recentInvoicesTable) return;
+
+    const sellerFilter = document.getElementById('dash-seller-filter')?.value || 'all';
+    const periodFilter = document.getElementById('dash-period-filter')?.value || 'all';
+
+    let filtered = (this.db.invoices || []).filter(inv => {
+      const matchPeriod = this.isRecordInPeriod(inv, periodFilter);
+      let matchSeller = true;
+      if (sellerFilter === 'admin') {
+        matchSeller = inv.sellerType !== 'مندوب' || inv.sellerName === 'حسام' || (inv.sellerName && inv.sellerName.includes('حسام')) || (inv.sellerName && inv.sellerName.includes('الإدارة'));
+      } else if (sellerFilter !== 'all') {
+        matchSeller = inv.sellerName === sellerFilter || inv.sellerId === sellerFilter;
+      }
+      return matchPeriod && matchSeller;
+    });
+
+    const recent = filtered.slice(0, 5);
+    if (recent.length === 0) {
+      recentInvoicesTable.innerHTML = `<tr><td colspan="7" class="text-center" style="text-align:center; padding: 20px; color: var(--text-muted);">لا توجد فواتير مطابقة للفلاتر المحددة</td></tr>`;
+    } else {
+      recentInvoicesTable.innerHTML = recent.map(inv => `
+        <tr>
+          <td><strong style="color: var(--gold);">${inv.id}</strong></td>
+          <td>${inv.customerName}</td>
+          <td>
+            <span class="badge-status blue" style="font-weight: 700; font-size: 0.8rem; white-space: nowrap;">
+              ${(inv.items || []).length} صنف (${(inv.items || []).reduce((s, it) => s + Number(it.qty || 0), 0)} قروصة)
+            </span>
+          </td>
+          <td>${inv.sellerName}</td>
+          <td><strong>${this.formatMoney(inv.grandTotal)} ج.م</strong></td>
+          <td>
+            <span class="badge-status ${inv.remainingAmount > 0 ? 'warning' : 'success'}">
+              ${inv.remainingAmount > 0 ? `أجل (${this.formatMoney(inv.remainingAmount)})` : 'كاش مسدد'}
+            </span>
+          </td>
+          <td class="table-actions-cell">
+            <div class="table-actions-row">
+              <button class="btn btn-secondary btn-sm" onclick="App.viewInvoiceModal('${inv.id}')" title="معاينة الفاتورة">
+                معاينة
+              </button>
+              <button class="btn btn-primary btn-sm" onclick="App.openEditInvoiceModal('${inv.id}')" title="تعديل الفاتورة">
+                ✏️ تعديل
+              </button>
+              <button class="btn btn-danger btn-sm" onclick="App.deleteInvoice('${inv.id}')" title="حذف الفاتورة">
+                🗑️ حذف
+              </button>
+            </div>
+          </td>
+        </tr>
+      `).join('');
     }
   },
 
@@ -1223,9 +1254,14 @@ const App = {
 
     const searchVal = (document.getElementById('pos-search-input')?.value || '').toLowerCase();
     
-    // Filter items (all one cigarette type)
+    // Filter items by search and category (محلي, أجنبي, مستورد)
     let filtered = this.db.items.filter(item => {
-      return item.name.toLowerCase().includes(searchVal) || (item.barcode && item.barcode.includes(searchVal));
+      const matchSearch = item.name.toLowerCase().includes(searchVal) || (item.barcode && item.barcode.includes(searchVal));
+      let matchCat = true;
+      if (this.selectedCategory && this.selectedCategory !== 'all') {
+        matchCat = (item.category || 'محلي') === this.selectedCategory;
+      }
+      return matchSearch && matchCat;
     });
 
     // If POS is in Rep dedicated mode
@@ -1267,9 +1303,17 @@ const App = {
         stockText = `متبقي ${stockAvailable} قروصة (قرب ينفذ)`;
       }
 
+      const itCat = item.category || 'محلي';
+      let catColor = '#38bdf8';
+      if (itCat === 'أجنبي') catColor = '#c084fc';
+      if (itCat === 'مستورد') catColor = '#fbbf24';
+
       return `
         <div class="product-card" onclick="App.addToCart('${item.id}')">
-          <span class="product-badge-stock ${stockBadgeClass}">${stockText}</span>
+          <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+            <span class="product-badge-stock ${stockBadgeClass}">${stockText}</span>
+            <span style="font-size: 0.72rem; font-weight: 700; color: ${catColor}; background: rgba(255,255,255,0.06); padding: 2px 8px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.1);">${itCat}</span>
+          </div>
           <div class="product-icon-wrap">${item.icon || '📦'}</div>
           <div>
             <div class="product-name">${item.name}</div>
@@ -1287,11 +1331,25 @@ const App = {
     }).join('');
   },
 
-  filterPOSCategory(cat, el) {
+  setPOSCategory(cat, el) {
     this.selectedCategory = cat;
-    document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
-    if (el) el.classList.add('active');
+    document.querySelectorAll('.pos-cat-btn').forEach(b => {
+      b.classList.remove('active');
+      b.style.background = '';
+      b.style.color = '';
+      b.style.borderColor = '';
+    });
+    if (el) {
+      el.classList.add('active');
+      el.style.background = 'var(--gold)';
+      el.style.color = '#000000';
+      el.style.borderColor = 'var(--gold)';
+    }
     this.renderPOSCatalog();
+  },
+
+  filterPOSCategory(cat, el) {
+    this.setPOSCategory(cat, el);
   },
 
   addToCart(itemId) {
@@ -1543,12 +1601,12 @@ const App = {
 
       if (currentRep && customersList.length === 0) {
         custSelect.innerHTML = `
-          <option value="">لا يوجد عملاء مخصصين لك (بيع نقدي عام)</option>
+          <option value="" disabled selected>لا يوجد عملاء مسجلين ومخصصين لك</option>
         `;
         this.currentCart.customerId = '';
       } else {
         custSelect.innerHTML = `
-          <option value="">${currentRep ? 'اختر العميل المخصص (أو عميل نقدي عام)...' : 'اختر العميل (أو عميل نقدي عام)...'}</option>
+          <option value="" disabled ${!this.currentCart.customerId ? 'selected' : ''}>-- اختر العميل المسجل (مطلوب) --</option>
           ${customersList.map(c => `
             <option value="${c.id}" ${c.id === (this.currentCart.customerId || prevVal) ? 'selected' : ''}>
               ${c.name} (دين: ${this.formatMoney(c.currentDebt)} ج.م)
@@ -1697,6 +1755,14 @@ const App = {
       if (prevDebtRow) prevDebtRow.style.display = 'none';
       if (newDebtRow) newDebtRow.style.display = 'none';
     }
+
+    // Live POS Cart Badge counter (Image 1 requirement)
+    const cartBadge = document.getElementById('pos-cart-badge');
+    if (cartBadge) {
+      const itemsCount = this.currentCart.items.length;
+      const totalCartons = this.currentCart.items.reduce((sum, it) => sum + Number(it.qty || 0), 0);
+      cartBadge.textContent = itemsCount > 0 ? `${itemsCount} أصناف (${totalCartons} قروصة)` : '0 صنف';
+    }
   },
 
   handleCartDiscountChange() {
@@ -1800,13 +1866,29 @@ const App = {
       return;
     }
 
+    if (!this.currentCart.customerId) {
+      this.showToast('عفواً، يجب اختيار عميل مسجل لإصدار الفاتورة (تم إلغاء البيع لعميل نقدي عام)', 'error');
+      const custSel = document.getElementById('cart-customer-select');
+      if (custSel) {
+        custSel.focus();
+        custSel.style.borderColor = 'var(--rose)';
+      }
+      return;
+    }
+
+    const customer = this.db.customers.find(c => c.id === this.currentCart.customerId);
+    if (!customer) {
+      this.showToast('يرجى اختيار عميل مسجل صحيح من القائمة', 'error');
+      return;
+    }
+
     const grossTotal = this.currentCart.items.reduce((sum, i) => sum + (i.qty * i.price), 0);
     const totalItemDiscounts = this.currentCart.items.reduce((sum, i) => sum + (Number(i.discount) || 0), 0);
     const subtotal = this.currentCart.items.reduce((sum, i) => sum + i.total, 0);
     const discount = this.currentCart.discount || 0;
     const grandTotal = Math.max(0, subtotal - discount);
+    const totalDiscounts = totalItemDiscounts + discount;
 
-    const customer = this.db.customers.find(c => c.id === this.currentCart.customerId);
     const paidInput = document.getElementById('cart-paid-input');
     let paid;
     if (paidInput && paidInput.value !== '') {
@@ -1814,128 +1896,146 @@ const App = {
     } else if (this.currentCart.paidAmount !== undefined && this.currentCart.paidAmount !== null) {
       paid = Number(this.currentCart.paidAmount);
     } else {
-      paid = customer ? 0 : grandTotal;
+      paid = 0;
     }
-    if (isNaN(paid)) paid = customer ? 0 : grandTotal;
+    if (isNaN(paid)) paid = 0;
 
     const remaining = Math.max(0, grandTotal - paid);
     const totalItemsCount = this.currentCart.items.length;
     const totalCartons = this.currentCart.items.reduce((sum, it) => sum + Number(it.qty || 0), 0);
 
-    const custName = customer ? customer.name : 'عميل نقدي عام';
-    const custPhone = customer ? customer.phone : '---';
-    const invoiceNo = `INV-${Date.now().toString().slice(-4)}`;
+    const custName = customer.name;
+    const prevDebt = Number(customer.currentDebt || 0);
+    const invoiceNo = `INV-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
     const nowStr = new Date().toLocaleString('ar-EG-u-nu-latn');
-    const seller = this.activeRepForPOS ? this.activeRepForPOS.name : (this.db.currentUser?.name || 'حسام');
+    const seller = this.activeRepForPOS ? this.activeRepForPOS.name : (this.db.currentUser?.name || 'حسام حسني');
+    const paymentMethodText = remaining > 0 ? (paid > 0 ? 'دفعة جزئية' : 'آجل بالكامل') : 'كاش مسدد بالكامل';
 
     const modalHtml = `
       <div class="modal-header">
         <h3>🧾 معاينة الفاتورة الإلكترونية</h3>
         <button class="modal-close-btn" onclick="App.closeModal()">&times;</button>
       </div>
-      <div class="modal-body" style="background: #f1f5f9; padding: 20px;">
+      <div class="modal-body" style="background: #f8fafc; padding: 16px;">
         
-        <!-- Thermal Receipt Box for Image Conversion -->
-        <div id="thermal-receipt-capture" class="receipt-wrapper">
-          <div class="receipt-header">
-            <div class="receipt-title">${this.db.settings.businessName}</div>
-            <div class="receipt-subtitle">سجل تجاري وبطاقة ضريبية - جملة السجاير بالقروصة</div>
-            <div class="receipt-subtitle">${this.db.settings.address} - هاتف: ${this.db.settings.phone}</div>
-            <div class="receipt-meta">
-              <span>رقم الفاتورة: <strong>${invoiceNo}</strong></span>
-              <span>التاريخ: ${nowStr}</span>
+        <!-- Thermal Receipt Box (Matching Image 2) -->
+        <div id="thermal-receipt-capture" class="receipt-wrapper" style="background: #ffffff; color: #0f172a; padding: 24px 20px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.12); font-family: 'Cairo', sans-serif; max-width: 480px; width: 100%; box-sizing: border-box; margin: 0 auto; border: 1px solid #e2e8f0;">
+          
+          <!-- Header -->
+          <div class="receipt-header" style="text-align: center; border-bottom: 2px dashed #cbd5e1; padding-bottom: 12px; margin-bottom: 14px;">
+            <div class="receipt-title" style="font-size: 1.35rem; font-weight: 900; color: #040609; display: flex; align-items: center; justify-content: center; gap: 8px;">
+              <span>🚬</span> <span>${this.db.settings.businessName || 'مؤسسة الدخان والسجائر ERP'}</span>
             </div>
-            <div class="receipt-meta">
-              <span>العميل: <strong>${custName}</strong></span>
-              <span>الهاتف: ${custPhone}</span>
+            <div class="receipt-subtitle" style="font-size: 0.85rem; color: #475569; font-weight: 600; margin-top: 4px;">تجارة الجملة والتجزئة • سجائر محلية ومستوردة</div>
+            <div class="receipt-subtitle" style="font-size: 0.8rem; color: #64748b; margin-top: 2px;">س.ت: 104928 • هاتف: ${this.db.settings.phone || '01150551500'}</div>
+          </div>
+
+          <!-- Metadata 2 Columns Grid -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; margin-bottom: 14px; font-size: 0.84rem; border-bottom: 1px dashed #cbd5e1; padding-bottom: 10px;">
+            <div>
+              <span style="color: #64748b;">رقم الفاتورة:</span>
+              <strong style="color: #0f172a; margin-right: 4px; font-family: monospace;">${invoiceNo}</strong>
             </div>
-            <div class="receipt-meta">
-              <span>المسؤول / البائع: <strong>${seller}</strong></span>
+            <div style="text-align: left;">
+              <span style="color: #64748b;">التاريخ والوقت:</span>
+              <strong style="color: #0f172a; margin-right: 4px; direction: ltr; display: inline-block;">${nowStr}</strong>
+            </div>
+            <div>
+              <span style="color: #64748b;">اسم العميل/التاجر:</span>
+              <strong style="color: #0f172a; margin-right: 4px;">${custName}</strong>
+            </div>
+            <div style="text-align: left;">
+              <span style="color: #64748b;">طريقة الدفع:</span>
+              <strong style="color: ${remaining > 0 ? '#ea580c' : '#16a34a'}; margin-right: 4px;">${paymentMethodText}</strong>
             </div>
           </div>
 
-          <table class="receipt-table">
+          <!-- Items Table -->
+          <table class="receipt-table" style="width: 100%; border-collapse: collapse; margin-bottom: 12px;">
             <thead>
-              <tr>
-                <th style="text-align: right;">الصنف (قروصة)</th>
-                <th style="text-align: center;">الكمية</th>
-                <th style="text-align: center;">السعر</th>
-                <th style="text-align: center;">خصم الصنف</th>
-                <th style="text-align: left;">الإجمالي</th>
+              <tr style="border-bottom: 2px solid #cbd5e1; color: #475569; font-size: 0.82rem;">
+                <th style="text-align: right; padding: 6px 4px;">الصنف</th>
+                <th style="text-align: center; padding: 6px 4px;">الوحدة</th>
+                <th style="text-align: center; padding: 6px 4px;">الكمية</th>
+                <th style="text-align: center; padding: 6px 4px;">السعر</th>
+                <th style="text-align: left; padding: 6px 4px;">الإجمالي</th>
               </tr>
             </thead>
             <tbody>
               ${this.currentCart.items.map(it => `
-                <tr>
-                  <td>${it.name}</td>
-                  <td style="text-align: center; font-weight: bold;">${it.qty}</td>
-                  <td style="text-align: center;">${it.price}</td>
-                  <td style="text-align: center; color: ${it.discount > 0 ? '#dc2626' : '#94a3b8'}; font-weight: ${it.discount > 0 ? 'bold' : 'normal'};">
-                    ${it.discount > 0 ? `- ${this.formatMoney(it.discount)}` : '0'}
+                <tr style="border-bottom: 1px dotted #e2e8f0; font-size: 0.84rem;">
+                  <td style="text-align: right; padding: 8px 4px; font-weight: 800; color: #0f172a;">
+                    ${it.name}
+                    ${it.discount > 0 ? `<div style="font-size: 0.74rem; color: #16a34a; font-weight: 700; margin-top: 2px;">(خصم صنف: -${this.formatMoney(it.discount)} ج.م)</div>` : ''}
                   </td>
-                  <td style="text-align: left; font-weight: bold;">${this.formatMoney(it.total)}</td>
+                  <td style="text-align: center; padding: 8px 4px; color: #64748b;">قروصة</td>
+                  <td style="text-align: center; padding: 8px 4px; font-weight: 800; color: #0f172a;">${it.qty}</td>
+                  <td style="text-align: center; padding: 8px 4px; color: #334155;">${this.formatMoney(it.price)}</td>
+                  <td style="text-align: left; padding: 8px 4px; font-weight: 800; color: #0f172a;">${this.formatMoney(it.total)}</td>
                 </tr>
               `).join('')}
             </tbody>
-            <tfoot>
-              <tr style="background: #f1f5f9; font-weight: bold; border-top: 2px solid #cbd5e1;">
-                <td style="text-align: right; color: #1e3a8a;">إجمالي الأصناف: ${totalItemsCount} صنف</td>
-                <td style="text-align: center; color: #1e3a8a; font-weight: 800;">${totalCartons} قروصة</td>
-                <td colspan="3" style="text-align: left; color: #64748b; font-size: 0.8rem;">إجمالي كمية القروصات</td>
-              </tr>
-            </tfoot>
           </table>
 
-          <div class="receipt-totals">
-            <div class="receipt-total-row" style="background: #eff6ff; padding: 6px 10px; border-radius: 6px; font-weight: bold; color: #1e3a8a; margin-bottom: 6px; border: 1px solid #bfdbfe;">
-              <span>إجمالي عدد الأصناف والكمية:</span>
-              <span style="font-weight: 800;">${totalItemsCount} صنف (${totalCartons} قروصة)</span>
-            </div>
-            <div class="receipt-total-row">
-              <span>المجموع الفرعي (قبل الخصم):</span>
-              <span>${this.formatMoney(grossTotal)} ج.م</span>
+          <!-- Items Count Banner (Matches Image 2) -->
+          <div class="receipt-items-count-banner" style="background: #fffbeb; border: 1px solid #fde68a; color: #92400e; font-weight: 800; font-size: 0.92rem; padding: 8px 14px; border-radius: 8px; text-align: center; margin: 12px 0 16px 0;">
+            إجمالي عدد الأصناف بالفاتورة: ${totalItemsCount} أصناف (${totalCartons} قروصة)
+          </div>
+
+          <!-- Summary Rows (Matches Image 2) -->
+          <div class="receipt-totals" style="display: flex; flex-direction: column; gap: 8px; font-size: 0.88rem; margin-bottom: 14px;">
+            <div style="display: flex; justify-content: space-between;">
+              <span style="color: #64748b;">المجموع قبل الخصم:</span>
+              <span style="color: #334155;">${this.formatMoney(grossTotal)} ج.م</span>
             </div>
             ${totalItemDiscounts > 0 ? `
-              <div class="receipt-total-row" style="color: #dc2626;">
+              <div style="display: flex; justify-content: space-between; color: #16a34a; font-weight: 700;">
                 <span>إجمالي خصم الأصناف:</span>
                 <span>- ${this.formatMoney(totalItemDiscounts)} ج.م</span>
               </div>
             ` : ''}
             ${discount > 0 ? `
-              <div class="receipt-total-row" style="color: #dc2626;">
-                <span>خصم الفاتورة العام:</span>
+              <div style="display: flex; justify-content: space-between; color: #ea580c; font-weight: 700;">
+                <span>خصم الفاتورة:</span>
                 <span>- ${this.formatMoney(discount)} ج.م</span>
               </div>
             ` : ''}
-            <div class="receipt-total-row grand">
-              <span>صافي إجمالي الفاتورة:</span>
+            ${(totalItemDiscounts > 0 && discount > 0) ? `
+              <div style="display: flex; justify-content: space-between; color: #10b981; font-weight: 800; background: #ecfdf5; padding: 4px 8px; border-radius: 6px;">
+                <span>إجمالي كل الخصومات:</span>
+                <span>- ${this.formatMoney(totalDiscounts)} ج.م</span>
+              </div>
+            ` : ''}
+            <div style="display: flex; justify-content: space-between; font-weight: 900; font-size: 1.05rem; color: #040609;">
+              <span>إجمالي قيمة الفاتورة الجديدة:</span>
               <span>${this.formatMoney(grandTotal)} ج.م</span>
             </div>
-            <div class="receipt-total-row" style="color: #059669; font-weight: bold;">
-              <span>المبلغ المدفوع (كاش):</span>
+            <div style="display: flex; justify-content: space-between; color: #dc2626; font-weight: 800;">
+              <span>المديونية السابقة للعميل:</span>
+              <span>${this.formatMoney(prevDebt)} ج.م</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; color: #6366f1; font-weight: 900; font-size: 0.96rem; background: rgba(99, 102, 241, 0.07); padding: 4px 8px; border-radius: 6px;">
+              <span>إجمالي الدين القديم + الجديد:</span>
+              <span>${this.formatMoney(prevDebt + grandTotal)} ج.م</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; color: #059669; font-weight: 800;">
+              <span>المبلغ المدفوع كاش الآن:</span>
               <span>${this.formatMoney(paid)} ج.م</span>
             </div>
-            ${remaining > 0 ? `
-              <div class="receipt-total-row" style="color: #dc2626; font-weight: bold;">
-                <span>المتبقي في الذمة (أجل):</span>
-                <span>${this.formatMoney(remaining)} ج.م</span>
-              </div>
-            ` : ''}
-            ${customer ? `
-              <div class="receipt-total-row" style="border-top: 1px dashed #cbd5e1; margin-top: 6px; padding-top: 6px; color: #475569; font-weight: bold;">
-                <span>رصيد الدين السابق:</span>
-                <span>${this.formatMoney(customer.currentDebt || 0)} ج.م</span>
-              </div>
-              <div class="receipt-total-row" style="color: #dc2626; font-weight: 900; font-size: 1.05rem;">
-                <span>إجمالي الدين الكلي بعد الفاتورة:</span>
-                <span>${this.formatMoney((customer.currentDebt || 0) + remaining)} ج.م</span>
-              </div>
-            ` : ''}
+            <div style="display: flex; justify-content: space-between; color: #dc2626; font-weight: 800;">
+              <span>المتبقي من الفاتورة الجديدة:</span>
+              <span>${this.formatMoney(remaining)} ج.م</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; color: #b91c1c; font-weight: 900; font-size: 1.1rem; background: #fef2f2; padding: 6px 10px; border-radius: 6px; border: 1px solid #fee2e2;">
+              <span>إجمالي الرصيد المتبقي المستحق على العميل:</span>
+              <span>${this.formatMoney(prevDebt + remaining)} ج.م</span>
+            </div>
           </div>
 
-          <div class="receipt-footer">
-            <div>${this.db.settings.receiptFooter}</div>
-            <div style="font-size: 0.7rem; color: #94a3b8; margin-top: 4px;">تم الإصدار عبر نظام Hossam ERP المتكامل</div>
+          <!-- Footer (Matches Image 2) -->
+          <div style="text-align: center; border-top: 1px dashed #cbd5e1; padding-top: 12px; margin-top: 10px; color: #64748b; font-size: 0.8rem;">
+            <div>شكراً لتعاملكم معنا! البضاعة المباعة لا تُرد بعد الاستلام.</div>
+            <div style="margin-top: 4px; font-weight: 700; color: #334155;">البائع: ${seller}</div>
           </div>
         </div>
 
@@ -1978,13 +2078,16 @@ const App = {
         const subtotal = this.currentCart.items.reduce((sum, i) => sum + i.total, 0);
         const discount = this.currentCart.discount || 0;
         const grandTotal = Math.max(0, subtotal - discount);
-        const paid = this.currentCart.paidAmount !== undefined ? this.currentCart.paidAmount : grandTotal;
+        const paid = this.currentCart.paidAmount !== undefined ? this.currentCart.paidAmount : 0;
         inv = {
           id: invInput,
           date: new Date().toLocaleDateString('ar-EG-u-nu-latn'),
-          customerName: customer ? customer.name : 'عميل نقدي عام',
+          dateTime: new Date().toLocaleString('ar-EG-u-nu-latn'),
+          customerId: customer ? customer.id : null,
+          customerName: customer ? customer.name : '',
           customerPhone: customer ? customer.phone : '',
-          sellerName: this.activeRepForPOS ? this.activeRepForPOS.name : (this.db.currentUser?.name || 'حسام'),
+          previousDebt: customer ? Number(customer.currentDebt || 0) : 0,
+          sellerName: this.activeRepForPOS ? this.activeRepForPOS.name : (this.db.currentUser?.name || 'حسام حسني'),
           items: this.currentCart.items,
           subTotal: subtotal,
           discount: discount,
@@ -2000,11 +2103,21 @@ const App = {
     const totalCartons = items.reduce((sum, it) => sum + Number(it.qty || 0), 0);
     const grossTotal = items.reduce((sum, i) => sum + (Number(i.qty) * Number(i.price)), 0);
     const totalItemDiscounts = items.reduce((sum, i) => sum + (Number(i.discount) || 0), 0);
+    const totalDiscount = totalItemDiscounts + (Number(inv.discount) || 0);
+    const grandTotal = Number(inv.grandTotal || 0);
+    const paid = Number(inv.paidAmount || 0);
+    const remaining = Number(inv.remainingAmount !== undefined ? inv.remainingAmount : Math.max(0, grandTotal - paid));
+
+    const customer = inv.customerId ? (this.db.customers || []).find(c => c.id === inv.customerId) : null;
+    const prevDebt = inv.previousDebt !== undefined ? Number(inv.previousDebt) : (customer ? Number(customer.currentDebt || 0) : 0);
+    const totalDueDebt = prevDebt + remaining;
+    const paymentMethodText = remaining > 0 ? (paid > 0 ? 'دفعة جزئية' : 'آجل بالكامل') : 'كاش مسدد بالكامل';
+    const invoiceDiscount = Number(inv.discount || 0);
 
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
-    const width = 500;
-    const height = Math.max(570, 530 + (items.length * 32));
+    const width = 520;
+    const height = Math.max(720, 640 + (items.length * 38));
 
     canvas.width = width;
     canvas.height = height;
@@ -2015,207 +2128,209 @@ const App = {
 
     // Border
     ctx.strokeStyle = '#cbd5e1';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(8, 8, width - 16, height - 16);
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(10, 10, width - 20, height - 20);
 
     ctx.fillStyle = '#0f172a';
     ctx.textAlign = 'center';
 
-    // Header
-    ctx.font = 'bold 20px Cairo, sans-serif';
-    ctx.fillText(this.db.settings.businessName || 'مؤسسة حسام لتجارة وتوزيع السجاير بالجملة', width / 2, 45);
+    // Header (Image 2)
+    ctx.font = 'bold 21px Cairo, sans-serif';
+    ctx.fillText(`🚬 ${this.db.settings.businessName || 'مؤسسة الدخان والسجائر ERP'}`, width / 2, 45);
+
+    ctx.font = 'bold 12px Cairo, sans-serif';
+    ctx.fillStyle = '#475569';
+    ctx.fillText('تجارة الجملة والتجزئة • سجائر محلية ومستوردة', width / 2, 68);
+
+    ctx.font = '11px Cairo, sans-serif';
+    ctx.fillStyle = '#64748b';
+    ctx.fillText(`س.ت: 104928 • هاتف: ${this.db.settings.phone || '01150551500'}`, width / 2, 86);
+
+    // Dashed divider line
+    ctx.strokeStyle = '#cbd5e1';
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(25, 100);
+    ctx.lineTo(width - 25, 100);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Invoice Meta (2 columns matching Image 2)
+    ctx.direction = 'rtl';
+    ctx.textAlign = 'right';
+    ctx.font = '12px Cairo, sans-serif';
+
+    // Right Column
+    ctx.fillStyle = '#64748b';
+    ctx.fillText('رقم الفاتورة:', width - 25, 122);
+    ctx.fillStyle = '#0f172a';
+    ctx.font = 'bold 12px Cairo, sans-serif';
+    ctx.fillText(inv.id || 'INV-0000', width - 95, 122);
+
+    ctx.fillStyle = '#64748b';
+    ctx.font = '12px Cairo, sans-serif';
+    ctx.fillText('اسم العميل/التاجر:', width - 25, 144);
+    ctx.fillStyle = '#0f172a';
+    ctx.font = 'bold 12px Cairo, sans-serif';
+    ctx.fillText(inv.customerName || 'عميل مسجل', width - 125, 144);
+
+    // Left Column
+    ctx.textAlign = 'left';
+    ctx.font = '12px Cairo, sans-serif';
+    ctx.fillStyle = '#64748b';
+    ctx.fillText('التاريخ والوقت:', 170, 122);
+    ctx.fillStyle = '#0f172a';
+    ctx.font = 'bold 11px Cairo, sans-serif';
+    ctx.fillText(inv.dateTime || inv.date || '', 25, 122);
 
     ctx.font = '12px Cairo, sans-serif';
     ctx.fillStyle = '#64748b';
-    ctx.fillText('سجل تجاري وبطاقة ضريبية - جملة سجاير بالقروصة', width / 2, 70);
-    ctx.fillText(`${this.db.settings.address || 'العنوان الرئيسي'} - هاتف: ${this.db.settings.phone || '01012345678'}`, width / 2, 90);
-
-    // Dashed line
-    ctx.strokeStyle = '#94a3b8';
-    ctx.setLineDash([5, 5]);
-    ctx.beginPath();
-    ctx.moveTo(25, 105);
-    ctx.lineTo(width - 25, 105);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    // Invoice Meta
-    ctx.direction = 'rtl';
+    ctx.fillText('طريقة الدفع:', 170, 144);
+    ctx.fillStyle = remaining > 0 ? '#ea580c' : '#16a34a';
     ctx.font = 'bold 12px Cairo, sans-serif';
-    ctx.fillStyle = '#334155';
-    ctx.textAlign = 'right';
-
-    ctx.fillText(`رقم الفاتورة: #${inv.id}`, width - 25, 130);
-    ctx.fillText(`التاريخ: ${inv.date}`, width - 25, 150);
-    ctx.fillText(`العميل: ${inv.customerName || 'عميل نقدي عام'}`, width - 25, 170);
-    ctx.fillText(`البائع: ${inv.sellerName || (this.db.currentUser?.name || 'حسام')}`, width - 25, 190);
+    ctx.fillText(paymentMethodText, 25, 144);
 
     // Table Header
-    ctx.fillStyle = '#f1f5f9';
-    ctx.fillRect(25, 205, width - 50, 28);
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillRect(25, 162, width - 50, 26);
     ctx.strokeStyle = '#cbd5e1';
-    ctx.strokeRect(25, 205, width - 50, 28);
+    ctx.strokeRect(25, 162, width - 50, 26);
 
-    ctx.fillStyle = '#0f172a';
+    ctx.fillStyle = '#475569';
     ctx.font = 'bold 12px Cairo, sans-serif';
-    ctx.fillText('الصنف (قروصة)', width - 35, 224);
+    ctx.textAlign = 'right';
+    ctx.fillText('الصنف', width - 35, 180);
 
     ctx.textAlign = 'center';
-    ctx.fillText('الكمية', width - 200, 224);
-    ctx.fillText('السعر', width - 270, 224);
-    ctx.fillText('خصم الصنف', width - 355, 224);
+    ctx.fillText('الوحدة', width - 170, 180);
+    ctx.fillText('الكمية', width - 235, 180);
+    ctx.fillText('السعر', width - 315, 180);
 
     ctx.textAlign = 'left';
-    ctx.fillText('الإجمالي', 35, 224);
+    ctx.fillText('الإجمالي', 35, 180);
 
     // Table Rows
-    let currentY = 250;
+    let currentY = 206;
     ctx.font = '12px Cairo, sans-serif';
     items.forEach((item) => {
       ctx.textAlign = 'right';
-      ctx.fillStyle = '#1e293b';
+      ctx.fillStyle = '#0f172a';
+      ctx.font = 'bold 12px Cairo, sans-serif';
       const itemName = item.name.length > 20 ? item.name.substring(0, 18) + '..' : item.name;
       ctx.fillText(itemName, width - 35, currentY);
 
+      ctx.font = '11px Cairo, sans-serif';
+      ctx.fillStyle = '#64748b';
       ctx.textAlign = 'center';
-      ctx.fillText(`${item.qty}`, width - 200, currentY);
-      ctx.fillText(`${item.price}`, width - 270, currentY);
+      ctx.fillText('قروصة', width - 170, currentY);
 
-      const itDisc = Number(item.discount) || 0;
-      if (itDisc > 0) {
-        ctx.fillStyle = '#dc2626';
-        ctx.fillText(`- ${itDisc}`, width - 355, currentY);
-      } else {
-        ctx.fillStyle = '#94a3b8';
-        ctx.fillText('0', width - 355, currentY);
+      ctx.fillStyle = '#0f172a';
+      ctx.font = 'bold 12px Cairo, sans-serif';
+      ctx.fillText(`${item.qty}`, width - 235, currentY);
+
+      ctx.font = '12px Cairo, sans-serif';
+      ctx.fillStyle = '#334155';
+      ctx.fillText(`${this.formatMoney(item.price)}`, width - 315, currentY);
+
+      ctx.fillStyle = '#0f172a';
+      ctx.font = 'bold 12px Cairo, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(`${this.formatMoney(item.total)}`, 35, currentY);
+
+      if (item.discount > 0) {
+        currentY += 15;
+        ctx.font = '10px Cairo, sans-serif';
+        ctx.fillStyle = '#16a34a';
+        ctx.textAlign = 'right';
+        ctx.fillText(`(خصم صنف: -${this.formatMoney(item.discount)} ج.م)`, width - 35, currentY);
       }
 
-      ctx.fillStyle = '#1e293b';
-      ctx.textAlign = 'left';
-      ctx.fillText(`${this.formatMoney(item.total || ((item.qty * item.price) - itDisc))} ج.م`, 35, currentY);
+      // Light dotted line under row
+      ctx.strokeStyle = '#f1f5f9';
+      ctx.beginPath();
+      ctx.moveTo(25, currentY + 6);
+      ctx.lineTo(width - 25, currentY + 6);
+      ctx.stroke();
 
-      currentY += 28;
+      currentY += 26;
     });
 
-    // Summary row of items count on canvas
-    ctx.fillStyle = '#eff6ff';
-    ctx.fillRect(25, currentY, width - 50, 26);
-    ctx.strokeStyle = '#bfdbfe';
-    ctx.strokeRect(25, currentY, width - 50, 26);
+    // Summary Box: Total items and cartons banner (Matches Image 2)
+    ctx.fillStyle = '#fffbeb';
+    ctx.fillRect(25, currentY, width - 50, 30);
+    ctx.strokeStyle = '#fde68a';
+    ctx.strokeRect(25, currentY, width - 50, 30);
 
-    ctx.fillStyle = '#1e3a8a';
+    ctx.fillStyle = '#92400e';
     ctx.font = 'bold 12px Cairo, sans-serif';
-    ctx.textAlign = 'right';
-    ctx.fillText(`إجمالي الأصناف: ${totalItemsCount} صنف`, width - 35, currentY + 18);
-    ctx.textAlign = 'left';
-    ctx.fillText(`إجمالي الكمية: ${totalCartons} قروصة`, 35, currentY + 18);
-    currentY += 36;
+    ctx.textAlign = 'center';
+    ctx.fillText(`إجمالي عدد الأصناف بالفاتورة: ${totalItemsCount} أصناف (${totalCartons} قروصة)`, width / 2, currentY + 20);
+    currentY += 44;
 
-    // Dashed line before totals
-    ctx.strokeStyle = '#94a3b8';
-    ctx.setLineDash([5, 5]);
+    // Financial Summary Rows (Matching Image 2)
+    const drawRow = (label, valStr, color = '#334155', isBold = false) => {
+      ctx.textAlign = 'right';
+      ctx.fillStyle = '#64748b';
+      ctx.font = isBold ? 'bold 12px Cairo, sans-serif' : '12px Cairo, sans-serif';
+      ctx.fillText(label, width - 35, currentY);
+
+      ctx.textAlign = 'left';
+      ctx.fillStyle = color;
+      ctx.font = isBold ? 'bold 13px Cairo, sans-serif' : '12px Cairo, sans-serif';
+      ctx.fillText(valStr, 35, currentY);
+      currentY += 22;
+    };
+
+    drawRow('المجموع قبل الخصم:', `${this.formatMoney(grossTotal)} ج.م`, '#334155', false);
+    if (totalItemDiscounts > 0) {
+      drawRow('إجمالي خصم الأصناف:', `- ${this.formatMoney(totalItemDiscounts)} ج.م`, '#16a34a', true);
+    }
+    if (invoiceDiscount > 0) {
+      drawRow('خصم الفاتورة:', `- ${this.formatMoney(invoiceDiscount)} ج.م`, '#ea580c', true);
+    }
+    if (totalItemDiscounts > 0 && invoiceDiscount > 0) {
+      drawRow('إجمالي كل الخصومات:', `- ${this.formatMoney(totalDiscount)} ج.م`, '#10b981', true);
+    }
+    drawRow('إجمالي قيمة الفاتورة الجديدة:', `${this.formatMoney(grandTotal)} ج.م`, '#040609', true);
+    drawRow('المديونية السابقة للعميل:', `${this.formatMoney(prevDebt)} ج.م`, '#dc2626', true);
+    drawRow('إجمالي الدين القديم + الجديد:', `${this.formatMoney(prevDebt + grandTotal)} ج.م`, '#6366f1', true);
+    drawRow('المبلغ المدفوع كاش الآن:', `${this.formatMoney(paid)} ج.م`, '#059669', true);
+    drawRow('المتبقي من الفاتورة الجديدة:', `${this.formatMoney(remaining)} ج.م`, '#dc2626', true);
+
+    // Final total debt due box
+    ctx.fillStyle = '#fef2f2';
+    ctx.fillRect(25, currentY - 4, width - 50, 30);
+    ctx.strokeStyle = '#fee2e2';
+    ctx.strokeRect(25, currentY - 4, width - 50, 30);
+
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#b91c1c';
+    ctx.font = 'bold 12px Cairo, sans-serif';
+    ctx.fillText('إجمالي الرصيد المتبقي المستحق على العميل:', width - 35, currentY + 16);
+
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#b91c1c';
+    ctx.font = 'bold 14px Cairo, sans-serif';
+    ctx.fillText(`${this.formatMoney(totalDueDebt)} ج.م`, 35, currentY + 16);
+    currentY += 40;
+
+    // Footer (Matches Image 2)
+    ctx.strokeStyle = '#cbd5e1';
+    ctx.setLineDash([4, 4]);
     ctx.beginPath();
     ctx.moveTo(25, currentY);
     ctx.lineTo(width - 25, currentY);
     ctx.stroke();
     ctx.setLineDash([]);
-    currentY += 22;
-
-    // Totals Box
-    ctx.textAlign = 'right';
-    ctx.font = '13px Cairo, sans-serif';
-    ctx.fillStyle = '#334155';
-
-    ctx.fillText('المجموع الفرعي (قبل الخصم):', width - 35, currentY);
-    ctx.textAlign = 'left';
-    ctx.fillText(`${this.formatMoney(grossTotal)} ج.م`, 35, currentY);
-    currentY += 22;
-
-    if (totalItemDiscounts > 0) {
-      ctx.textAlign = 'right';
-      ctx.fillStyle = '#dc2626';
-      ctx.fillText('إجمالي خصم الأصناف:', width - 35, currentY);
-      ctx.textAlign = 'left';
-      ctx.fillText(`- ${this.formatMoney(totalItemDiscounts)} ج.م`, 35, currentY);
-      currentY += 22;
-    }
-
-    if (inv.discount && inv.discount > 0) {
-      ctx.textAlign = 'right';
-      ctx.fillStyle = '#dc2626';
-      ctx.fillText('خصم الفاتورة العام:', width - 35, currentY);
-      ctx.textAlign = 'left';
-      ctx.fillText(`- ${this.formatMoney(inv.discount)} ج.م`, 35, currentY);
-      currentY += 22;
-    }
-
-    // Grand Total
-    ctx.fillStyle = '#0f172a';
-    ctx.font = 'bold 15px Cairo, sans-serif';
-    ctx.textAlign = 'right';
-    ctx.fillText('صافي إجمالي الفاتورة:', width - 35, currentY);
-    ctx.textAlign = 'left';
-    ctx.fillText(`${this.formatMoney(inv.grandTotal)} ج.م`, 35, currentY);
-    currentY += 24;
-
-    // Paid & Remaining
-    ctx.font = 'bold 13px Cairo, sans-serif';
-    ctx.fillStyle = '#059669';
-    ctx.textAlign = 'right';
-    ctx.fillText('المبلغ المدفوع (كاش):', width - 35, currentY);
-    ctx.textAlign = 'left';
-    ctx.fillText(`${this.formatMoney(inv.paidAmount !== undefined ? inv.paidAmount : inv.grandTotal)} ج.م`, 35, currentY);
-    currentY += 22;
-
-    const rem = inv.remainingAmount || 0;
-    if (rem > 0) {
-      ctx.fillStyle = '#dc2626';
-      ctx.textAlign = 'right';
-      ctx.fillText('المتبقي في الذمة (أجل):', width - 35, currentY);
-      ctx.textAlign = 'left';
-      ctx.fillText(`${this.formatMoney(rem)} ج.م`, 35, currentY);
-      currentY += 22;
-    } else {
-      ctx.fillStyle = '#059669';
-      ctx.textAlign = 'right';
-      ctx.fillText('حالة السداد:', width - 35, currentY);
-      ctx.textAlign = 'left';
-      ctx.fillText('مدفوع بالكامل كاش ✓', 35, currentY);
-      currentY += 22;
-    }
-
-    const targetCust = inv.customerId ? (this.db.customers || []).find(c => c.id === inv.customerId) : null;
-    if (targetCust) {
-      const prevDebt = Number(targetCust.currentDebt) || 0;
-      const totalCustomerDebt = (inv.customerId && (this.db.invoices || []).some(i => i.id === inv.id))
-        ? prevDebt
-        : prevDebt + rem;
-      
-      ctx.font = '12px Cairo, sans-serif';
-      ctx.fillStyle = '#475569';
-      ctx.textAlign = 'right';
-      ctx.fillText('إجمالي دين العميل المستحق:', width - 35, currentY);
-      ctx.textAlign = 'left';
-      ctx.fillStyle = '#dc2626';
-      ctx.font = 'bold 13px Cairo, sans-serif';
-      ctx.fillText(`${this.formatMoney(totalCustomerDebt)} ج.م`, 35, currentY);
-      currentY += 22;
-    }
-
-    // Footer
-    currentY += 10;
-    ctx.strokeStyle = '#cbd5e1';
-    ctx.beginPath();
-    ctx.moveTo(25, currentY);
-    ctx.lineTo(width - 25, currentY);
-    ctx.stroke();
-    currentY += 22;
+    currentY += 18;
 
     ctx.font = '11px Cairo, sans-serif';
     ctx.fillStyle = '#64748b';
     ctx.textAlign = 'center';
-    ctx.fillText(this.db.settings.receiptFooter || 'شكراً لتعاملكم معنا', width / 2, currentY);
-    ctx.fillText('نظام Hossam ERP لتجارة السجاير بالجملة', width / 2, currentY + 18);
+    ctx.fillText('شكراً لتعاملكم معنا! البضاعة المباعة لا تُرد بعد الاستلام.', width / 2, currentY);
+    ctx.font = 'bold 11px Cairo, sans-serif';
+    ctx.fillStyle = '#334155';
+    ctx.fillText(`البائع: ${inv.sellerName || (this.db.currentUser?.name || 'حسام حسني')}`, width / 2, currentY + 16);
 
     return canvas;
   },
@@ -2433,6 +2548,11 @@ const App = {
   async confirmSaveInvoice(invoiceNo) {
     if (this.currentCart.items.length === 0) return;
 
+    if (!this.currentCart.customerId) {
+      this.showToast('عفواً، يجب اختيار عميل مسجل لإتمام حفظ الفاتورة (تم إلغاء البيع لعميل نقدي عام)', 'error');
+      return;
+    }
+
     const grossTotal = this.currentCart.items.reduce((sum, i) => sum + (i.qty * i.price), 0);
     const totalItemDiscounts = this.currentCart.items.reduce((sum, i) => sum + (Number(i.discount) || 0), 0);
     const subtotal = this.currentCart.items.reduce((sum, i) => sum + i.total, 0);
@@ -2441,6 +2561,10 @@ const App = {
     const grandTotal = Math.max(0, subtotal - discount);
 
     const customer = this.db.customers.find(c => c.id === this.currentCart.customerId);
+    if (!customer) {
+      this.showToast('يرجى اختيار عميل مسجل صحيح لإتمام الفاتورة', 'error');
+      return;
+    }
 
     const paidInput = document.getElementById('cart-paid-input');
     let paid;
@@ -2449,17 +2573,20 @@ const App = {
     } else if (this.currentCart.paidAmount !== undefined && this.currentCart.paidAmount !== null) {
       paid = Number(this.currentCart.paidAmount);
     } else {
-      paid = customer ? 0 : grandTotal;
+      paid = 0;
     }
-    if (isNaN(paid)) paid = customer ? 0 : grandTotal;
+    if (isNaN(paid)) paid = 0;
 
     const remaining = Math.max(0, grandTotal - paid);
     const netProfit = grandTotal - totalCost;
 
-    const custName = customer ? customer.name : 'عميل نقدي عام';
-    const custPhone = customer ? customer.phone : '---';
+    const custName = customer.name;
+    const custPhone = customer.phone || '---';
+    const prevDebt = Number(customer.currentDebt || 0);
+    const nowStr = new Date().toLocaleString('ar-EG-u-nu-latn');
+    const paymentStatusDesc = remaining > 0 ? (paid > 0 ? 'دفعة جزئية' : 'آجل بالكامل') : 'كاش مسدد بالكامل';
     const sellerType = this.activeRepForPOS ? 'مندوب' : 'الإدارة (الرئيسية)';
-    const sellerName = this.activeRepForPOS ? this.activeRepForPOS.name : (this.db.currentUser?.name || 'حسام');
+    const sellerName = this.activeRepForPOS ? this.activeRepForPOS.name : (this.db.currentUser?.name || 'حسام حسني');
 
     // 1. Deduct Stock Cartons (Always deduct from main warehouse inventory for all sales)
     this.currentCart.items.forEach(cartItem => {
@@ -2489,7 +2616,7 @@ const App = {
       if (paid > 0) {
         this.db.treasuryLogs.unshift({
           id: `TR-${Date.now().toString().slice(-4)}`,
-          date: new Date().toLocaleString('ar-EG-u-nu-latn'),
+          date: nowStr,
           type: 'مبيعات نقدية (فاتورة)',
           sourceName: `${custName} (فاتورة #${invoiceNo})`,
           receivedBy: sellerName,
@@ -2506,20 +2633,20 @@ const App = {
       }
     }
 
-    // 2. Update Customer's record if customer exists
-    if (customer) {
-      customer.totalPurchases = (customer.totalPurchases || 0) + grandTotal;
-      customer.totalPaid = (customer.totalPaid || 0) + paid;
-      customer.currentDebt = (customer.currentDebt || 0) + remaining;
-    }
+    // 2. Update Customer's record
+    customer.totalPurchases = (customer.totalPurchases || 0) + grandTotal;
+    customer.totalPaid = (customer.totalPaid || 0) + paid;
+    customer.currentDebt = (customer.currentDebt || 0) + remaining;
 
     // 3. Save to Invoices Log
     const newInvoice = {
       id: invoiceNo,
       date: new Date().toISOString().replace('T', ' ').substring(0, 16),
-      customerId: customer ? customer.id : null,
+      dateTime: nowStr,
+      customerId: customer.id,
       customerName: custName,
       customerPhone: custPhone,
+      previousDebt: prevDebt,
       sellerType: sellerType,
       sellerName: sellerName,
       items: JSON.parse(JSON.stringify(this.currentCart.items)),
@@ -2532,7 +2659,7 @@ const App = {
       remainingAmount: remaining,
       netProfit: netProfit,
       warehouseStockDeducted: true,
-      paymentStatus: remaining > 0 ? (paid > 0 ? 'جزئي (أجل)' : 'أجل بالكامل') : 'مدفوع بالكامل'
+      paymentStatus: paymentStatusDesc
     };
     this.db.invoices.unshift(newInvoice);
 
@@ -2543,7 +2670,26 @@ const App = {
       type: 'invoice'
     });
 
-    // Reset Cart
+    // 4.B: Admin Notification if Representative gave a discount
+    const isRepSale = sellerType === 'مندوب' || !!this.activeRepForPOS || (this.db.currentUser && this.db.currentUser.role && this.db.currentUser.role.includes('مندوب'));
+    const allDiscountsGiven = (Number(totalItemDiscounts) || 0) + (Number(discount) || 0);
+    if (isRepSale && allDiscountsGiven > 0) {
+      let discountDetails = [];
+      if (totalItemDiscounts > 0) discountDetails.push(`خصم أصناف: ${this.formatMoney(totalItemDiscounts)} ج.م`);
+      if (discount > 0) discountDetails.push(`خصم فاتورة: ${this.formatMoney(discount)} ج.م`);
+
+      this.addNotification({
+        title: `⚠️ تنبيه: خصم ممنوح من المندوب (${sellerName})`,
+        desc: `قام المندوب ${sellerName} بمنح خصم إجمالي قدره ${this.formatMoney(allDiscountsGiven)} ج.م (${discountDetails.join('، ')}) على الفاتورة #${invoiceNo} للعميل ${custName}.`,
+        type: 'warning'
+      });
+      
+      if (!this.isCurrentUserRep()) {
+        this.showToast(`⚠️ تنبيه: المندوب ${sellerName} منح خصم ${this.formatMoney(allDiscountsGiven)} ج.م على الفاتورة #${invoiceNo}`, 'warning');
+      }
+    }
+
+    // Reset Cart and update UI immediately
     this.currentCart.items = [];
     this.currentCart.discount = 0;
     this.currentCart.paidAmount = 0;
@@ -2555,6 +2701,8 @@ const App = {
     if (discEl) discEl.value = 0;
     const custSelect = document.getElementById('cart-customer-select');
     if (custSelect) custSelect.value = '';
+
+    this.renderPOSCart();
 
     this.syncDB();
     if (window.FDB) {
@@ -2614,6 +2762,39 @@ const App = {
       const totalCustodyCartons = (rep.activeCustody || []).reduce((sum, c) => sum + (Number(c.cartons) || 0), 0);
       const custodyTypesCount = (rep.activeCustody || []).length;
 
+      // Calculate cartons sold THIS month for this rep directly from actual invoices (Real numbers)
+      const now = new Date();
+      const currentYear = now.getFullYear();
+      const currentMonth = now.getMonth();
+      const repInvoices = (this.db.invoices || []).filter(inv => 
+        (inv.sellerId && inv.sellerId === rep.id) ||
+        (inv.sellerName && (inv.sellerName === rep.name || inv.sellerName === rep.username)) ||
+        (inv.sellerType === 'مندوب' && inv.sellerName === rep.name)
+      );
+      const monthlyCartonsSold = repInvoices.filter(inv => {
+        let invDate = null;
+        if (inv.date) {
+          const d = new Date(inv.date);
+          if (!isNaN(d.getTime())) invDate = d;
+        }
+        if (!invDate && inv.dateTime) {
+          const d = new Date(inv.dateTime);
+          if (!isNaN(d.getTime())) invDate = d;
+        }
+        if (invDate) {
+          return invDate.getFullYear() === currentYear && invDate.getMonth() === currentMonth;
+        }
+        const monthNum = String(currentMonth + 1).padStart(2, '0');
+        const s = `${inv.date || ''} ${inv.dateTime || ''}`;
+        return s.includes(`${currentYear}-${monthNum}`) || s.includes(`${currentYear}/${currentMonth + 1}`);
+      }).reduce((sum, inv) => {
+        return sum + (inv.items || []).reduce((s, it) => s + (Number(it.qty) || 0), 0);
+      }, 0);
+
+      // Real actual total sales from rep's invoices
+      const actualRepTotalSales = repInvoices.reduce((sum, inv) => sum + Number(inv.grandTotal || 0), 0);
+      const displayedTotalSales = actualRepTotalSales > 0 ? actualRepTotalSales : (rep.totalSales || 0);
+
       return `
         <div class="rep-card-fintech" style="background: #0a0e17; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 16px; padding: 18px; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4); position: relative;">
           
@@ -2658,7 +2839,11 @@ const App = {
           <div style="background: rgba(15, 23, 42, 0.75); border: 1px solid rgba(255, 255, 255, 0.07); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 10px; font-size: 0.86rem;">
             <div style="display: flex; justify-content: space-between; align-items: center;">
               <span style="color: #94a3b8;">إجمالي مبيعات المندوب:</span>
-              <strong style="color: #f59e0b; font-family: 'JetBrains Mono', monospace; font-size: 0.95rem;">${this.formatMoney(rep.totalSales || 0)} ج.م</strong>
+              <strong style="color: #f59e0b; font-family: 'JetBrains Mono', monospace; font-size: 0.95rem;">${this.formatMoney(displayedTotalSales)} ج.م</strong>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 4px; border-top: 1px dashed rgba(255, 255, 255, 0.08);">
+              <span style="color: #94a3b8; display: flex; align-items: center; gap: 6px;">📦 إجمالي القروصة المباعة هذا الشهر:</span>
+              <strong style="color: #38bdf8; font-family: 'JetBrains Mono', monospace; font-size: 0.95rem;">${monthlyCartonsSold} قروصة</strong>
             </div>
             <div style="display: flex; justify-content: space-between; align-items: center;">
               <span style="color: #94a3b8; display: flex; align-items: center; gap: 6px;">⚖️ نقدية حالية مع المندوب:</span>
@@ -3579,6 +3764,7 @@ const App = {
   // ==========================================
   renderInventory() {
     const searchVal = (document.getElementById('inventory-search-input')?.value || '').toLowerCase();
+    const filterCat = document.getElementById('inventory-filter-category')?.value || 'all';
     const filterStatus = document.getElementById('inventory-filter-status')?.value || 'all';
 
     const tbody = document.getElementById('inventory-table-body');
@@ -3587,16 +3773,21 @@ const App = {
     let items = this.db.items.filter(item => {
       const matchSearch = item.name.toLowerCase().includes(searchVal) || (item.barcode && item.barcode.includes(searchVal));
       
+      let matchCat = true;
+      if (filterCat !== 'all') {
+        matchCat = (item.category || 'محلي') === filterCat;
+      }
+
       let matchStatus = true;
       if (filterStatus === 'available') matchStatus = item.cartonsInStock > item.reorderLevel;
       if (filterStatus === 'low') matchStatus = item.cartonsInStock <= item.reorderLevel && item.cartonsInStock > 0;
       if (filterStatus === 'out') matchStatus = item.cartonsInStock <= 0;
 
-      return matchSearch && matchStatus;
+      return matchSearch && matchCat && matchStatus;
     });
 
     if (items.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; padding: 30px; color: var(--text-muted);">لا توجد أصناف مطابقة</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; padding: 30px; color: var(--text-muted);">لا توجد أصناف مطابقة</td></tr>`;
       return;
     }
 
@@ -3610,7 +3801,15 @@ const App = {
         statusBadge = `<span class="badge-status success">متوفر (${item.cartonsInStock})</span>`;
       }
 
-      const profitPerCarton = (item.sellingPrice || 0) - (item.purchasePrice || 0);
+      const itCat = item.category || 'محلي';
+      let catBadge = '';
+      if (itCat === 'مستورد') {
+        catBadge = '<span class="badge-status warning" style="font-weight: 700;">مستورد</span>';
+      } else if (itCat === 'أجنبي') {
+        catBadge = '<span class="badge-status" style="background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); font-weight: 700;">أجنبي</span>';
+      } else {
+        catBadge = '<span class="badge-status info" style="font-weight: 700;">محلي</span>';
+      }
 
       return `
         <tr>
@@ -3622,6 +3821,7 @@ const App = {
               </div>
             </div>
           </td>
+          <td>${catBadge}</td>
           <td><code>${item.barcode}</code></td>
           <td><strong style="color: var(--gold); font-size: 1.05rem;">${item.cartonsInStock}</strong> قروصة</td>
           <td>${this.formatMoney(item.purchasePrice)} ج.م</td>
@@ -3629,7 +3829,7 @@ const App = {
           <td>${statusBadge}</td>
           <td>
             <div style="display: flex; gap: 6px;">
-              <button class="btn btn-secondary btn-sm" onclick="App.openRestockPriceModal('${item.id}')">تعديل</button>
+              <button class="btn btn-secondary btn-sm" onclick="App.openEditItemModal('${item.id}')">تعديل</button>
               <button class="btn btn-danger btn-sm" onclick="App.deleteItem('${item.id}')">حذف</button>
             </div>
           </td>
@@ -3652,27 +3852,38 @@ const App = {
             <input type="text" id="item-name" class="form-control" placeholder="مثال: كليوباترا بوكس أبيض">
           </div>
           <div class="form-group">
-            <label class="form-label">الباركود *</label>
-            <input type="text" id="item-barcode" class="form-control" placeholder="مثال: 622100xxxx" value="622${Date.now().toString().slice(-6)}">
+            <label class="form-label">تصنيف الصنف *</label>
+            <select id="item-category" class="form-control">
+              <option value="محلي">محلي</option>
+              <option value="أجنبي">أجنبي</option>
+              <option value="مستورد">مستورد</option>
+            </select>
           </div>
         </div>
 
         <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">الباركود *</label>
+            <input type="text" id="item-barcode" class="form-control" placeholder="مثال: 622100xxxx" value="622${Date.now().toString().slice(-6)}">
+          </div>
           <div class="form-group">
             <label class="form-label">الرصيد الافتتاحي بالمخزن (قروصة) *</label>
             <input type="number" id="item-cartons" class="form-control" placeholder="0" min="0">
           </div>
-          <div class="form-group">
-            <label class="form-label">حد الطلب الآمن (تنبيه النواقص)</label>
-            <input type="number" id="item-reorder" class="form-control" value="15" min="1">
-          </div>
         </div>
 
         <div class="form-row">
           <div class="form-group">
+            <label class="form-label">حد الطلب الآمن (تنبيه النواقص)</label>
+            <input type="number" id="item-reorder" class="form-control" value="15" min="1">
+          </div>
+          <div class="form-group">
             <label class="form-label">سعر الشراء للقروصة (ج.م) *</label>
             <input type="number" id="item-buy-price" class="form-control" placeholder="0.00" step="1">
           </div>
+        </div>
+
+        <div class="form-row">
           <div class="form-group">
             <label class="form-label">سعر البيع بالجملة للقروصة (ج.م) *</label>
             <input type="number" id="item-sell-price" class="form-control" placeholder="0.00" step="1">
@@ -3689,6 +3900,7 @@ const App = {
 
   saveNewItem() {
     const name = document.getElementById('item-name').value.trim();
+    const category = document.getElementById('item-category')?.value || 'محلي';
     const barcode = document.getElementById('item-barcode').value.trim();
     const icon = '📦';
     const cartonsInStock = Number(document.getElementById('item-cartons').value) || 0;
@@ -3709,6 +3921,7 @@ const App = {
     const newItem = {
       id: `item_${Date.now()}`,
       name,
+      category,
       barcode,
       icon,
       cartonsInStock,
@@ -3724,7 +3937,7 @@ const App = {
     // Add Notification & sync to Firestore
     this.addNotification({
       title: 'إضافة صنف جديد للمخزن',
-      desc: `تمت إضافة الصنف "${name}" برصيد ${cartonsInStock} قروصة وسعر بيع ${this.formatMoney(sellingPrice)} ج.م`,
+      desc: `تمت إضافة الصنف "${name}" (${category}) برصيد ${cartonsInStock} قروصة وسعر بيع ${this.formatMoney(sellingPrice)} ج.م`,
       type: 'stock'
     });
 
@@ -3750,27 +3963,38 @@ const App = {
             <input type="text" id="edit-item-name" class="form-control" value="${item.name}">
           </div>
           <div class="form-group">
-            <label class="form-label">الباركود</label>
-            <input type="text" id="edit-item-barcode" class="form-control" value="${item.barcode}">
+            <label class="form-label">تصنيف الصنف</label>
+            <select id="edit-item-category" class="form-control">
+              <option value="محلي" ${(item.category || 'محلي') === 'محلي' ? 'selected' : ''}>محلي</option>
+              <option value="أجنبي" ${item.category === 'أجنبي' ? 'selected' : ''}>أجنبي</option>
+              <option value="مستورد" ${item.category === 'مستورد' ? 'selected' : ''}>مستورد</option>
+            </select>
           </div>
         </div>
 
         <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">الباركود</label>
+            <input type="text" id="edit-item-barcode" class="form-control" value="${item.barcode}">
+          </div>
           <div class="form-group">
             <label class="form-label">المخزون الحالي بالمخزن (قروصة)</label>
             <input type="number" id="edit-item-cartons" class="form-control" value="${item.cartonsInStock}">
           </div>
-          <div class="form-group">
-            <label class="form-label">حد الطلب (تنبيه النقص)</label>
-            <input type="number" id="edit-item-reorder" class="form-control" value="${item.reorderLevel}">
-          </div>
         </div>
 
         <div class="form-row">
           <div class="form-group">
+            <label class="form-label">حد الطلب (تنبيه النقص)</label>
+            <input type="number" id="edit-item-reorder" class="form-control" value="${item.reorderLevel}">
+          </div>
+          <div class="form-group">
             <label class="form-label">سعر الشراء للقروصة (ج.م)</label>
             <input type="number" id="edit-item-buy" class="form-control" value="${item.purchasePrice}">
           </div>
+        </div>
+
+        <div class="form-row">
           <div class="form-group">
             <label class="form-label">سعر البيع للقروصة (ج.م)</label>
             <input type="number" id="edit-item-sell" class="form-control" value="${item.sellingPrice}">
@@ -3790,6 +4014,7 @@ const App = {
     if (!item) return;
 
     item.name = document.getElementById('edit-item-name').value.trim();
+    item.category = document.getElementById('edit-item-category')?.value || 'محلي';
     item.barcode = document.getElementById('edit-item-barcode').value.trim();
     item.cartonsInStock = Number(document.getElementById('edit-item-cartons').value) || 0;
     item.reorderLevel = Number(document.getElementById('edit-item-reorder').value) || 15;
@@ -4692,6 +4917,19 @@ const App = {
     setVal('rep-kpi-sales-revenue', totalSalesRevenue);
     setVal('rep-kpi-net-profit', totalInvoicesProfit);
 
+    // Populate seller filter in Reports
+    const repSellerFilterEl = document.getElementById('reports-seller-filter');
+    if (repSellerFilterEl) {
+      const prevVal = repSellerFilterEl.value || 'all';
+      repSellerFilterEl.innerHTML = `
+        <option value="all" ${prevVal === 'all' ? 'selected' : ''}>كل البائعين (الكل)</option>
+        <option value="admin" ${prevVal === 'admin' ? 'selected' : ''}>حسام (الإدارة الرئيسية)</option>
+        ${(this.db.reps || []).map(r => `
+          <option value="${r.name}" ${prevVal === r.name ? 'selected' : ''}>المندوب: ${r.name}</option>
+        `).join('')}
+      `;
+    }
+
     // Render Tables (Sales invoices & Treasury receipts)
     this.setReportsTab(this.activeReportsTab || 'invoices');
     this.filterReportsData();
@@ -4718,6 +4956,7 @@ const App = {
   filterReportsData() {
     const searchVal = (document.getElementById('reports-search-input')?.value || '').toLowerCase().trim();
     const period = document.getElementById('reports-period-filter')?.value || 'all';
+    const seller = document.getElementById('reports-seller-filter')?.value || 'all';
 
     // Filter invoices
     let filteredInvoices = (this.db.invoices || []).filter(inv => {
@@ -4727,7 +4966,15 @@ const App = {
                           (inv.sellerName && inv.sellerName.toLowerCase().includes(searchVal));
       
       const matchDate = this.isRecordInPeriod(inv, period);
-      return matchSearch && matchDate;
+
+      let matchSeller = true;
+      if (seller === 'admin') {
+        matchSeller = inv.sellerType !== 'مندوب' || inv.sellerName === 'حسام' || (inv.sellerName && inv.sellerName.includes('حسام')) || (inv.sellerName && inv.sellerName.includes('الإدارة'));
+      } else if (seller !== 'all') {
+        matchSeller = inv.sellerName === seller || inv.sellerId === seller;
+      }
+
+      return matchSearch && matchDate && matchSeller;
     });
 
     const invTbody = document.getElementById('reports-invoices-tbody');
@@ -4738,7 +4985,7 @@ const App = {
         invTbody.innerHTML = filteredInvoices.map(inv => `
           <tr>
             <td><strong style="color: var(--gold);">${inv.id}</strong></td>
-            <td>${inv.date}</td>
+            <td>${inv.dateTime || inv.date}</td>
             <td>${inv.customerName}</td>
             <td>
               <span class="badge-status blue" style="font-weight: 700; white-space: nowrap; font-size: 0.8rem;">
@@ -4773,7 +5020,15 @@ const App = {
                             (log.notes && log.notes.toLowerCase().includes(searchVal)) ||
                             (log.receivedBy && log.receivedBy.toLowerCase().includes(searchVal));
         const matchDate = this.isRecordInPeriod(log, period);
-        return matchSearch && matchDate;
+
+        let matchSeller = true;
+        if (seller === 'admin') {
+          matchSeller = !log.receivedBy || log.receivedBy === 'حسام' || log.receivedBy.includes('حسام') || log.receivedBy.includes('الإدارة');
+        } else if (seller !== 'all') {
+          matchSeller = (log.sourceName && log.sourceName.includes(seller)) || log.receivedBy === seller;
+        }
+
+        return matchSearch && matchDate && matchSeller;
       });
 
       // Update Badges
@@ -4818,98 +5073,140 @@ const App = {
     const totalCartons = items.reduce((sum, it) => sum + Number(it.qty || 0), 0);
     const grossTotal = items.reduce((sum, it) => sum + (Number(it.qty) * Number(it.price)), 0);
     const totalItemDiscounts = items.reduce((sum, it) => sum + (Number(it.discount) || 0), 0);
+    const totalDiscount = totalItemDiscounts + (Number(inv.discount) || 0);
+    const grandTotal = Number(inv.grandTotal || 0);
+    const paid = Number(inv.paidAmount || 0);
+    const remaining = Number(inv.remainingAmount !== undefined ? inv.remainingAmount : Math.max(0, grandTotal - paid));
+
+    const customer = inv.customerId ? (this.db.customers || []).find(c => c.id === inv.customerId) : null;
+    const prevDebt = inv.previousDebt !== undefined ? Number(inv.previousDebt) : (customer ? Number(customer.currentDebt || 0) : 0);
+    const paymentMethodText = remaining > 0 ? (paid > 0 ? 'دفعة جزئية' : 'آجل بالكامل') : 'كاش مسدد بالكامل';
+    const dateTimeStr = inv.dateTime || inv.date || new Date().toLocaleString('ar-EG-u-nu-latn');
+    const seller = inv.sellerName || (this.db.currentUser?.name || 'حسام حسني');
 
     const modalHtml = `
       <div class="modal-header">
         <h3>🧾 تفاصيل الفاتورة #${inv.id}</h3>
         <button class="modal-close-btn" onclick="App.closeModal()">&times;</button>
       </div>
-      <div class="modal-body" style="background: #f1f5f9; padding: 20px;">
-        <div id="view-invoice-capture" class="receipt-wrapper">
-          <div class="receipt-header">
-            <div class="receipt-title">${this.db.settings.businessName}</div>
-            <div class="receipt-subtitle">${this.db.settings.address} - هاتف: ${this.db.settings.phone}</div>
-            <div class="receipt-meta">
-              <span>رقم الفاتورة: <strong>${inv.id}</strong></span>
-              <span>التاريخ: ${inv.date}</span>
+      <div class="modal-body" style="background: #f8fafc; padding: 16px;">
+        <div id="view-invoice-capture" class="receipt-wrapper" style="background: #ffffff; color: #0f172a; padding: 24px 20px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.12); font-family: 'Cairo', sans-serif; max-width: 480px; width: 100%; box-sizing: border-box; margin: 0 auto; border: 1px solid #e2e8f0;">
+          
+          <!-- Header -->
+          <div class="receipt-header" style="text-align: center; border-bottom: 2px dashed #cbd5e1; padding-bottom: 12px; margin-bottom: 14px;">
+            <div class="receipt-title" style="font-size: 1.35rem; font-weight: 900; color: #040609; display: flex; align-items: center; justify-content: center; gap: 8px;">
+              <span>🚬</span> <span>${this.db.settings.businessName || 'مؤسسة الدخان والسجائر ERP'}</span>
             </div>
-            <div class="receipt-meta">
-              <span>العميل: <strong>${inv.customerName}</strong></span>
-              <span>البائع: <strong>${inv.sellerName}</strong></span>
+            <div class="receipt-subtitle" style="font-size: 0.85rem; color: #475569; font-weight: 600; margin-top: 4px;">تجارة الجملة والتجزئة • سجائر محلية ومستوردة</div>
+            <div class="receipt-subtitle" style="font-size: 0.8rem; color: #64748b; margin-top: 2px;">س.ت: 104928 • هاتف: ${this.db.settings.phone || '01150551500'}</div>
+          </div>
+
+          <!-- Metadata 2 Columns Grid -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; margin-bottom: 14px; font-size: 0.84rem; border-bottom: 1px dashed #cbd5e1; padding-bottom: 10px;">
+            <div>
+              <span style="color: #64748b;">رقم الفاتورة:</span>
+              <strong style="color: #0f172a; margin-right: 4px; font-family: monospace;">${inv.id}</strong>
+            </div>
+            <div style="text-align: left;">
+              <span style="color: #64748b;">التاريخ والوقت:</span>
+              <strong style="color: #0f172a; margin-right: 4px; direction: ltr; display: inline-block;">${dateTimeStr}</strong>
+            </div>
+            <div>
+              <span style="color: #64748b;">اسم العميل/التاجر:</span>
+              <strong style="color: #0f172a; margin-right: 4px;">${inv.customerName || 'عميل مسجل'}</strong>
+            </div>
+            <div style="text-align: left;">
+              <span style="color: #64748b;">طريقة الدفع:</span>
+              <strong style="color: ${remaining > 0 ? '#ea580c' : '#16a34a'}; margin-right: 4px;">${paymentMethodText}</strong>
             </div>
           </div>
 
-          <table class="receipt-table">
+          <!-- Items Table -->
+          <table class="receipt-table" style="width: 100%; border-collapse: collapse; margin-bottom: 12px;">
             <thead>
-              <tr>
-                <th style="text-align: right;">الصنف (قروصة)</th>
-                <th style="text-align: center;">الكمية</th>
-                <th style="text-align: center;">السعر</th>
-                <th style="text-align: center;">خصم الصنف</th>
-                <th style="text-align: left;">الإجمالي</th>
+              <tr style="border-bottom: 2px solid #cbd5e1; color: #475569; font-size: 0.82rem;">
+                <th style="text-align: right; padding: 6px 4px;">الصنف</th>
+                <th style="text-align: center; padding: 6px 4px;">الوحدة</th>
+                <th style="text-align: center; padding: 6px 4px;">الكمية</th>
+                <th style="text-align: center; padding: 6px 4px;">السعر</th>
+                <th style="text-align: left; padding: 6px 4px;">الإجمالي</th>
               </tr>
             </thead>
             <tbody>
               ${items.map(it => `
-                <tr>
-                  <td>${it.name}</td>
-                  <td style="text-align: center; font-weight: bold;">${it.qty}</td>
-                  <td style="text-align: center;">${it.price}</td>
-                  <td style="text-align: center; color: ${it.discount > 0 ? '#dc2626' : '#94a3b8'}; font-weight: ${it.discount > 0 ? 'bold' : 'normal'};">
-                    ${it.discount > 0 ? `- ${this.formatMoney(it.discount)}` : '0'}
+                <tr style="border-bottom: 1px dotted #e2e8f0; font-size: 0.84rem;">
+                  <td style="text-align: right; padding: 8px 4px; font-weight: 800; color: #0f172a;">
+                    ${it.name}
+                    ${it.discount > 0 ? `<div style="font-size: 0.74rem; color: #16a34a; font-weight: 700; margin-top: 2px;">(خصم صنف: -${this.formatMoney(it.discount)} ج.م)</div>` : ''}
                   </td>
-                  <td style="text-align: left; font-weight: bold;">${this.formatMoney(it.total)}</td>
+                  <td style="text-align: center; padding: 8px 4px; color: #64748b;">قروصة</td>
+                  <td style="text-align: center; padding: 8px 4px; font-weight: 800; color: #0f172a;">${it.qty}</td>
+                  <td style="text-align: center; padding: 8px 4px; color: #334155;">${this.formatMoney(it.price)}</td>
+                  <td style="text-align: left; padding: 8px 4px; font-weight: 800; color: #0f172a;">${this.formatMoney(it.total)}</td>
                 </tr>
               `).join('')}
             </tbody>
-            <tfoot>
-              <tr style="background: #f1f5f9; font-weight: bold; border-top: 2px solid #cbd5e1;">
-                <td style="text-align: right; color: #1e3a8a;">إجمالي الأصناف: ${totalItemsCount} صنف</td>
-                <td style="text-align: center; color: #1e3a8a; font-weight: 800;">${totalCartons} قروصة</td>
-                <td colspan="3" style="text-align: left; color: #64748b; font-size: 0.8rem;">إجمالي كمية القروصات</td>
-              </tr>
-            </tfoot>
           </table>
 
-          <div class="receipt-totals">
-            <div class="receipt-total-row" style="background: #eff6ff; padding: 6px 10px; border-radius: 6px; font-weight: bold; color: #1e3a8a; margin-bottom: 6px; border: 1px solid #bfdbfe;">
-              <span>إجمالي عدد الأصناف والكمية:</span>
-              <span style="font-weight: 800;">${totalItemsCount} صنف (${totalCartons} قروصة)</span>
-            </div>
-            <div class="receipt-total-row">
-              <span>المجموع الفرعي (قبل الخصم):</span>
-              <span>${this.formatMoney(grossTotal)} ج.م</span>
+          <!-- Items Count Banner (Matches Image 2) -->
+          <div class="receipt-items-count-banner" style="background: #fffbeb; border: 1px solid #fde68a; color: #92400e; font-weight: 800; font-size: 0.92rem; padding: 8px 14px; border-radius: 8px; text-align: center; margin: 12px 0 16px 0;">
+            إجمالي عدد الأصناف بالفاتورة: ${totalItemsCount} أصناف (${totalCartons} قروصة)
+          </div>
+
+          <!-- Summary Rows (Matches Image 2) -->
+          <div class="receipt-totals" style="display: flex; flex-direction: column; gap: 8px; font-size: 0.88rem; margin-bottom: 14px;">
+            <div style="display: flex; justify-content: space-between;">
+              <span style="color: #64748b;">المجموع قبل الخصم:</span>
+              <span style="color: #334155;">${this.formatMoney(grossTotal)} ج.م</span>
             </div>
             ${totalItemDiscounts > 0 ? `
-              <div class="receipt-total-row" style="color: #dc2626;">
+              <div style="display: flex; justify-content: space-between; color: #16a34a; font-weight: 700;">
                 <span>إجمالي خصم الأصناف:</span>
                 <span>- ${this.formatMoney(totalItemDiscounts)} ج.م</span>
               </div>
             ` : ''}
-            ${inv.discount > 0 ? `
-              <div class="receipt-total-row" style="color: #dc2626;">
-                <span>خصم الفاتورة العام:</span>
+            ${(Number(inv.discount) || 0) > 0 ? `
+              <div style="display: flex; justify-content: space-between; color: #ea580c; font-weight: 700;">
+                <span>خصم الفاتورة:</span>
                 <span>- ${this.formatMoney(inv.discount)} ج.م</span>
               </div>
             ` : ''}
-            <div class="receipt-total-row grand">
-              <span>صافي الفاتورة:</span>
-              <span>${this.formatMoney(inv.grandTotal)} ج.م</span>
-            </div>
-            <div class="receipt-total-row" style="color: #059669; font-weight: bold;">
-              <span>المدفوع:</span>
-              <span>${this.formatMoney(inv.paidAmount)} ج.م</span>
-            </div>
-            ${inv.remainingAmount > 0 ? `
-              <div class="receipt-total-row" style="color: #dc2626; font-weight: bold;">
-                <span>المتبقي (أجل):</span>
-                <span>${this.formatMoney(inv.remainingAmount)} ج.م</span>
+            ${(totalItemDiscounts > 0 && (Number(inv.discount) || 0) > 0) ? `
+              <div style="display: flex; justify-content: space-between; color: #10b981; font-weight: 800; background: #ecfdf5; padding: 4px 8px; border-radius: 6px;">
+                <span>إجمالي كل الخصومات:</span>
+                <span>- ${this.formatMoney(totalDiscount)} ج.م</span>
               </div>
             ` : ''}
+            <div style="display: flex; justify-content: space-between; font-weight: 900; font-size: 1.05rem; color: #040609;">
+              <span>إجمالي قيمة الفاتورة الجديدة:</span>
+              <span>${this.formatMoney(grandTotal)} ج.م</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; color: #dc2626; font-weight: 800;">
+              <span>المديونية السابقة للعميل:</span>
+              <span>${this.formatMoney(prevDebt)} ج.م</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; color: #6366f1; font-weight: 900; font-size: 0.96rem; background: rgba(99, 102, 241, 0.07); padding: 4px 8px; border-radius: 6px;">
+              <span>إجمالي الدين القديم + الجديد:</span>
+              <span>${this.formatMoney(prevDebt + grandTotal)} ج.م</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; color: #059669; font-weight: 800;">
+              <span>المبلغ المدفوع كاش الآن:</span>
+              <span>${this.formatMoney(paid)} ج.م</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; color: #dc2626; font-weight: 800;">
+              <span>المتبقي من الفاتورة الجديدة:</span>
+              <span>${this.formatMoney(remaining)} ج.م</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; color: #b91c1c; font-weight: 900; font-size: 1.1rem; background: #fef2f2; padding: 6px 10px; border-radius: 6px; border: 1px solid #fee2e2;">
+              <span>إجمالي الرصيد المتبقي المستحق على العميل:</span>
+              <span>${this.formatMoney(prevDebt + remaining)} ج.م</span>
+            </div>
           </div>
 
-          <div class="receipt-footer">
-            <div>${this.db.settings.receiptFooter}</div>
+          <!-- Footer (Matches Image 2) -->
+          <div style="text-align: center; border-top: 1px dashed #cbd5e1; padding-top: 12px; margin-top: 10px; color: #64748b; font-size: 0.8rem;">
+            <div>شكراً لتعاملكم معنا! البضاعة المباعة لا تُرد بعد الاستلام.</div>
+            <div style="margin-top: 4px; font-weight: 700; color: #334155;">البائع: ${seller}</div>
           </div>
         </div>
       </div>
@@ -4932,6 +5229,7 @@ const App = {
         <button class="btn btn-secondary" onclick="App.closeModal()">إغلاق</button>
       </div>
     `;
+
     this.openModal(modalHtml);
   },
 
@@ -4976,7 +5274,7 @@ const App = {
           <div class="form-group">
             <label class="form-label">العميل *</label>
             <select id="edit-inv-customer" class="custom-select" onchange="App.onEditInvoiceCustomerChange(this.value)">
-              <option value="">عميل نقدي عام</option>
+              <option value="" disabled ${!inv.customerId ? 'selected' : ''}>-- اختر العميل المسجل (مطلوب) --</option>
               ${customersOptions}
             </select>
           </div>
@@ -5247,9 +5545,17 @@ const App = {
 
     const customerSelect = document.getElementById('edit-inv-customer');
     const newCustId = customerSelect ? customerSelect.value : inv.customerId;
+    if (!newCustId) {
+      this.showToast('عفواً، يجب اختيار عميل مسجل للفاتورة', 'error');
+      return;
+    }
     const newCust = (this.db.customers || []).find(c => c.id === newCustId);
-    const newCustName = newCust ? newCust.name : (customerSelect?.options[customerSelect.selectedIndex]?.text || inv.customerName);
-    const newPhone = document.getElementById('edit-inv-phone')?.value.trim() || inv.customerPhone;
+    if (!newCust) {
+      this.showToast('يرجى اختيار عميل مسجل صحيح', 'error');
+      return;
+    }
+    const newCustName = newCust.name;
+    const newPhone = document.getElementById('edit-inv-phone')?.value.trim() || newCust.phone || inv.customerPhone;
     const newDate = document.getElementById('edit-inv-date')?.value.trim() || inv.date;
     const newSellerName = document.getElementById('edit-inv-seller')?.value.trim() || inv.sellerName;
     const newSellerType = newSellerName.includes('مندوب') || (this.db.reps || []).some(r => r.name === newSellerName) ? 'مندوب' : 'الإدارة (الرئيسية)';
@@ -5377,6 +5683,22 @@ const App = {
       window.FDB.updateDocument('invoices', inv.id, inv);
       window.FDB.setDocument('settings', 'capital', { capital: this.db.capital, treasury: this.db.treasury });
     }
+
+    // Admin Notification if Representative gave a discount on invoice edit
+    const isRepSale = newSellerType === 'مندوب' || (this.db.currentUser && this.db.currentUser.role && this.db.currentUser.role.includes('مندوب'));
+    const allDiscountsGiven = (Number(totalItemDiscounts) || 0) + (Number(discount) || 0);
+    if (isRepSale && allDiscountsGiven > 0) {
+      let discountDetails = [];
+      if (totalItemDiscounts > 0) discountDetails.push(`خصم أصناف: ${this.formatMoney(totalItemDiscounts)} ج.م`);
+      if (discount > 0) discountDetails.push(`خصم فاتورة: ${this.formatMoney(discount)} ج.م`);
+
+      this.addNotification({
+        title: `⚠️ تنبيه خصم عند تعديل فاتورة من المندوب: ${newSellerName}`,
+        desc: `قام المندوب ${newSellerName} بمنح خصم قدره ${this.formatMoney(allDiscountsGiven)} ج.م (${discountDetails.join('، ')}) على الفاتورة #${inv.id} للعميل ${newCustName}.`,
+        type: 'warning'
+      });
+    }
+
     this.closeModal();
     this.showToast(`تم حفظ وتحديث الفاتورة #${inv.id} بنجاح`);
     this.reconcileAllStats();
@@ -5673,27 +5995,29 @@ const App = {
         <h3>🏦 تفاصيل سند القبض #${log.id}</h3>
         <button class="modal-close-btn" onclick="App.closeModal()">&times;</button>
       </div>
-      <div class="modal-body" style="background: #f8fafc; padding: 25px;">
-        <div id="view-receipt-capture" class="receipt-wrapper" style="max-width: 520px; margin: 0 auto; background: #ffffff; border: 2px solid #0f172a; border-radius: 8px; padding: 24px; color: #0f172a; font-family: 'Cairo', sans-serif; box-shadow: 0 10px 25px rgba(0,0,0,0.1);">
+      <div class="modal-body" style="background: #f8fafc; padding: 16px;">
+        <div id="view-receipt-capture" class="receipt-wrapper" style="max-width: 480px; width: 100%; box-sizing: border-box; margin: 0 auto; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; padding: 24px 20px; color: #0f172a; font-family: 'Cairo', sans-serif; box-shadow: 0 10px 30px rgba(0,0,0,0.12);">
           
           <!-- Header -->
-          <div style="text-align: center; border-bottom: 2px solid #0f172a; padding-bottom: 12px; margin-bottom: 15px;">
-            <div style="font-size: 1.25rem; font-weight: 900; color: #0f172a;">${this.db.settings.businessName}</div>
-            <div style="font-size: 0.85rem; color: #475569; margin-top: 3px;">سجل تجاري وبطاقة ضريبية - تجارة وتوزيع بالجملة</div>
-            <div style="font-size: 0.8rem; color: #64748b;">${this.db.settings.address} - هاتف: ${this.db.settings.phone}</div>
+          <div style="text-align: center; border-bottom: 2px dashed #cbd5e1; padding-bottom: 12px; margin-bottom: 15px;">
+            <div style="font-size: 1.35rem; font-weight: 900; color: #0f172a; display: flex; align-items: center; justify-content: center; gap: 8px;">
+              <span>🚬</span> <span>${this.db.settings.businessName || 'مؤسسة الدخان والسجائر ERP'}</span>
+            </div>
+            <div style="font-size: 0.85rem; color: #475569; font-weight: 600; margin-top: 4px;">تجارة الجملة والتجزئة • سجائر محلية ومستوردة</div>
+            <div style="font-size: 0.8rem; color: #64748b; margin-top: 2px;">س.ت: 104928 • هاتف: ${this.db.settings.phone || '01150551500'}</div>
           </div>
 
           <!-- Title Badge -->
-          <div style="text-align: center; margin-bottom: 20px;">
-            <div style="display: inline-block; background: #0f172a; color: #ffffff; padding: 6px 24px; border-radius: 20px; font-weight: 800; font-size: 1.05rem; letter-spacing: 0.5px;">
+          <div style="text-align: center; margin-bottom: 18px;">
+            <div style="display: inline-block; background: #0f172a; color: #ffffff; padding: 6px 24px; border-radius: 20px; font-weight: 800; font-size: 1rem; letter-spacing: 0.5px;">
               سند قبض نقدية / توريد خزينة
             </div>
           </div>
 
           <!-- Details Grid -->
-          <div style="display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 0.88rem; border-bottom: 1px dashed #cbd5e1; padding-bottom: 8px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; font-size: 0.88rem; border-bottom: 1px dashed #cbd5e1; padding-bottom: 8px; flex-wrap: wrap; gap: 6px;">
             <div><strong>رقم السند:</strong> <span style="font-family: monospace; font-size: 1rem; color: #0284c7; font-weight: bold;">#${log.id}</span></div>
-            <div><strong>التاريخ:</strong> <span>${log.date}</span></div>
+            <div><strong>التاريخ والوقت:</strong> <span style="direction: ltr; display: inline-block; font-weight: 700;">${log.date}</span></div>
           </div>
 
           <div style="margin-bottom: 12px; font-size: 0.92rem; line-height: 1.8;">
