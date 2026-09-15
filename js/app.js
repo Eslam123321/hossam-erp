@@ -52,6 +52,9 @@ const App = {
 
   async pullAllFromFirestore() {
     if (!window.FDB || !window.FDB.db) return false;
+    if (typeof window.FDB.ensureAuth === 'function') {
+      await window.FDB.ensureAuth().catch(() => {});
+    }
     this.updateCloudStatus('syncing', 'جاري المزامنة...');
     try {
       const collections = ['items', 'customers', 'invoices', 'treasury', 'reps', 'users', 'settings', 'notifications'];
@@ -8768,7 +8771,7 @@ const App = {
 
       // 2. Validate against Firestore synced users / local database
       const cleanUsername = username.toLowerCase();
-      const foundUser = (this.db.users || []).find(u => {
+      let foundUser = (this.db.users || []).find(u => {
         const uLogin = (u.username || '').toLowerCase();
         const uFullName = (u.name || '').toLowerCase();
         const uEmail = (u.email || '').toLowerCase();
@@ -8776,6 +8779,33 @@ const App = {
         const isPassMatch = (u.password && String(u.password).trim() === String(password).trim());
         return isLoginMatch && isPassMatch;
       });
+
+      // 3. If user is not yet in local cache (fresh phone / clear cache / new employee), pull live users from Firestore
+      if (!foundUser && window.FDB && window.FDB.db) {
+        try {
+          if (typeof window.FDB.ensureAuth === 'function') {
+            await window.FDB.ensureAuth().catch(() => {});
+          }
+          const snap = await window.FDB.db.collection('users').get();
+          const firestoreUsers = [];
+          snap.forEach(doc => firestoreUsers.push({ id: doc.id, ...doc.data() }));
+          if (firestoreUsers.length > 0) {
+            this.db.users = firestoreUsers;
+            this.sanitizeUsersList();
+            this.syncDB();
+            foundUser = firestoreUsers.find(u => {
+              const uLogin = (u.username || '').toLowerCase();
+              const uFullName = (u.name || '').toLowerCase();
+              const uEmail = (u.email || '').toLowerCase();
+              const isLoginMatch = (uLogin === cleanUsername || uFullName === cleanUsername || uEmail === cleanUsername);
+              const isPassMatch = (u.password && String(u.password).trim() === String(password).trim());
+              return isLoginMatch && isPassMatch;
+            });
+          }
+        } catch (liveErr) {
+          console.warn('Live Firestore users fetch error during login:', liveErr);
+        }
+      }
 
       if (foundUser) {
         if (foundUser.status && foundUser.status !== 'active') {
@@ -8786,8 +8816,7 @@ const App = {
         return;
       }
 
-      // If user is not found, check if it failed due to Firebase Auth rate limit
-      const fbErr = window.FDB?.lastLoginError;
+      // If user is not found, show friendly toast
       this.showToast('بيانات الدخول غير صحيحة، يرجى التأكد من اسم المستخدم وكلمة المرور المسجلة', 'error');
     } catch (err) {
       console.error('Login error:', err);

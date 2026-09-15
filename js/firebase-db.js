@@ -52,11 +52,20 @@ const FDB = {
   db,
   cleanPayload,
 
-  // Ensure active Firebase Auth session for writes
+  // Ensure active Firebase Auth session for writes and sync
   async ensureAuth() {
     if (auth.currentUser) return auth.currentUser;
     try {
-      let pass = "01095412229";
+      // 1. Primary: Use dedicated cloud connection account
+      try {
+        const cred = await auth.signInWithEmailAndPassword("cloud_sync@hossam-erp.com", "HossamErpCloud2026!");
+        if (cred && cred.user) return cred.user;
+      } catch (e1) {
+        console.warn("Cloud sync primary auth notice:", e1.message);
+      }
+
+      // 2. Fallback: try cached admin password or known defaults
+      let pass = "998800";
       try {
         const local = localStorage.getItem('HOSSAM_ERP_FIRESTORE_LIVE_V3');
         if (local) {
