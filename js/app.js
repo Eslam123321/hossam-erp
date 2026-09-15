@@ -760,6 +760,74 @@ const App = {
     };
   },
 
+  // تحويل فوري لأي أرقام عربية أو مشرقية أو فواصل إلى أرقام إنجليزية معيارية
+  convertArabicNumbers(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+      .replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d))
+      .replace(/[۰-۹]/g, d => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d))
+      .replace(/[٫،]/g, '.');
+  },
+
+  // استخراج وتحويل القيم الرقمية بأمان من أي مدخل يدوي
+  parseNumber(val, defaultVal = 0) {
+    if (val === null || val === undefined || val === '') return defaultVal;
+    const clean = this.convertArabicNumbers(val);
+    const num = parseFloat(clean);
+    return isNaN(num) ? defaultVal : num;
+  },
+
+  // استخراج وتنسيق توقيت الإشعار الفعلي بدقة (لحظي / اليوم / أمس / تاريخ كامل)
+  getNotificationTimeDisplay(n) {
+    if (!n) return 'الآن';
+    let d = null;
+    if (n.createdAt) {
+      if (typeof n.createdAt.toDate === 'function') d = n.createdAt.toDate();
+      else if (n.createdAt.seconds) d = new Date(n.createdAt.seconds * 1000);
+      else d = new Date(n.createdAt);
+    }
+    if ((!d || isNaN(d.getTime())) && n.localTimestamp) {
+      d = new Date(n.localTimestamp);
+    }
+    if ((!d || isNaN(d.getTime())) && n.timestamp) {
+      d = new Date(n.timestamp);
+    }
+    if ((!d || isNaN(d.getTime())) && n.id) {
+      const match = String(n.id).match(/\d{13}/);
+      if (match) {
+        const ts = parseInt(match[0], 10);
+        if (!isNaN(ts) && ts > 1500000000000) d = new Date(ts);
+      }
+    }
+    if ((!d || isNaN(d.getTime())) && n.date) {
+      d = new Date(n.date);
+    }
+
+    if (!d || isNaN(d.getTime())) {
+      return (n.time && n.time !== 'الآن') ? n.time : 'الآن';
+    }
+
+    const now = new Date();
+    const diffSec = Math.floor((now - d) / 1000);
+    if (diffSec >= 0 && diffSec < 60) {
+      return 'الآن';
+    }
+
+    const formatted = this.formatDateTime(d);
+    const isToday = d.toDateString() === now.toDateString();
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const isYesterday = d.toDateString() === yesterday.toDateString();
+
+    if (isToday) {
+      return `اليوم ${formatted.timeShort}`;
+    } else if (isYesterday) {
+      return `أمس ${formatted.timeShort}`;
+    } else {
+      return `${formatted.dateOnly} - ${formatted.timeShort}`;
+    }
+  },
+
   showToast(message, type = 'success') {
     let container = document.getElementById('toast-container');
     if (!container) {
@@ -929,6 +997,93 @@ const App = {
         this.toggleSidebar();
       });
     }
+
+    // -------------------------------------------------------------
+    // تحويل تلقائي للأرقام العربية والفارسية إلى أرقام إنجليزية في جميع المدخلات
+    // (يسمح باستخدام لوحة المفاتيح العربية على الموبايل والكمبيوتر دون الحاجة للتحويل للإنجليزية)
+    // -------------------------------------------------------------
+    const handleNumericInputAutoConvert = (target) => {
+      if (!target || !(target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
+      if (target.type === 'password') return;
+      const val = target.value;
+      if (val && /[٠-٩۰-۹٫،]/.test(val)) {
+        const converted = this.convertArabicNumbers(val);
+        if (converted !== val) {
+          const cursor = target.selectionStart;
+          target.value = converted;
+          try {
+            if (cursor !== null && target.type !== 'number') {
+              target.setSelectionRange(cursor, cursor);
+            }
+          } catch (e) {}
+        }
+      }
+    };
+
+    // 1. قبل الإدخال (beforeinput): لمعالجة ضغطات الكيبورد العربي قبل رفضها من الحقل
+    document.addEventListener('beforeinput', (e) => {
+      const target = e.target;
+      if (!target || !(target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
+      if (target.type === 'password') return;
+      if (e.data && /[٠-٩۰-۹٫،]/.test(e.data)) {
+        const converted = this.convertArabicNumbers(e.data);
+        if (target.type === 'number') {
+          e.preventDefault();
+          const start = target.selectionStart ?? (target.value ? target.value.length : 0);
+          const end = target.selectionEnd ?? (target.value ? target.value.length : 0);
+          const val = target.value || '';
+          target.value = val.slice(0, start) + converted + val.slice(end);
+          try { target.setSelectionRange(start + converted.length, start + converted.length); } catch (err) {}
+          target.dispatchEvent(new Event('input', { bubbles: true }));
+          target.dispatchEvent(new Event('change', { bubbles: true }));
+        } else if (document.queryCommandSupported && document.queryCommandSupported('insertText')) {
+          e.preventDefault();
+          document.execCommand('insertText', false, converted);
+        }
+      }
+    }, true);
+
+    // 2. أثناء الإدخال (input): تحويل فوري لأي نص يصل إلى الحقل
+    document.addEventListener('input', (e) => {
+      handleNumericInputAutoConvert(e.target);
+    }, true);
+
+    // 3. عند اللصق (paste): تحويل الأرقام المنسوخة بالعربي فور لصقها
+    document.addEventListener('paste', (e) => {
+      const target = e.target;
+      if (!target || !(target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
+      if (target.type === 'password') return;
+      const pasted = (e.clipboardData || window.clipboardData)?.getData('text');
+      if (pasted && /[٠-٩۰-۹٫،]/.test(pasted)) {
+        e.preventDefault();
+        const converted = this.convertArabicNumbers(pasted);
+        const start = target.selectionStart ?? (target.value ? target.value.length : 0);
+        const end = target.selectionEnd ?? (target.value ? target.value.length : 0);
+        const val = target.value || '';
+        target.value = val.slice(0, start) + converted + val.slice(end);
+        try { target.setSelectionRange(start + converted.length, start + converted.length); } catch (err) {}
+        target.dispatchEvent(new Event('input', { bubbles: true }));
+        target.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    }, true);
+
+    // 4. ضغطات الأزرار (keydown): للأجهزة والمتصفحات التي ترسل أرقاماً عربية
+    document.addEventListener('keydown', (e) => {
+      const target = e.target;
+      if (!target || !(target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
+      if (target.type === 'password') return;
+      if (target.type === 'number' && e.key && /[٠-٩۰-۹٫،]/.test(e.key)) {
+        e.preventDefault();
+        const converted = this.convertArabicNumbers(e.key);
+        const start = target.selectionStart ?? (target.value ? target.value.length : 0);
+        const end = target.selectionEnd ?? (target.value ? target.value.length : 0);
+        const val = target.value || '';
+        target.value = val.slice(0, start) + converted + val.slice(end);
+        try { target.setSelectionRange(start + converted.length, start + converted.length); } catch (err) {}
+        target.dispatchEvent(new Event('input', { bubbles: true }));
+        target.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    }, true);
   },
 
   toggleSidebar(open) {
@@ -1221,7 +1376,7 @@ const App = {
 
   saveAddCapital() {
     const opType = document.getElementById('modal-capital-type')?.value || 'both';
-    const amount = Number(document.getElementById('modal-capital-amount')?.value);
+    const amount = this.parseNumber(document.getElementById('modal-capital-amount')?.value, 0);
     const source = document.getElementById('modal-capital-source')?.value || 'حسام (المالك)';
 
     if (isNaN(amount) || amount < 0) {
@@ -1506,9 +1661,9 @@ const App = {
   updateCartItemPrice(itemId, priceVal) {
     const itemInCart = this.currentCart.items.find(i => i.id === itemId);
     if (!itemInCart) return;
-    const p = Math.max(0, Number(priceVal) || 0);
+    const p = Math.max(0, this.parseNumber(priceVal, 0));
     itemInCart.price = p;
-    const disc = Number(itemInCart.discount) || 0;
+    const disc = this.parseNumber(itemInCart.discount, 0);
     itemInCart.total = Math.max(0, (itemInCart.qty * p) - disc);
 
     const totalEl = document.getElementById(`cart-item-total-${itemId}`);
@@ -1530,9 +1685,9 @@ const App = {
   updateCartItemQtyInput(itemId, qtyVal) {
     const itemInCart = this.currentCart.items.find(i => i.id === itemId);
     if (!itemInCart) return;
-    const q = Math.max(1, Number(qtyVal) || 1);
+    const q = Math.max(1, this.parseNumber(qtyVal, 1));
     itemInCart.qty = q;
-    const disc = Number(itemInCart.discount) || 0;
+    const disc = this.parseNumber(itemInCart.discount, 0);
     itemInCart.total = Math.max(0, (q * itemInCart.price) - disc);
 
     const totalEl = document.getElementById(`cart-item-total-${itemId}`);
@@ -1554,7 +1709,7 @@ const App = {
   updateCartItemDiscount(itemId, discountVal) {
     const itemInCart = this.currentCart.items.find(i => i.id === itemId);
     if (!itemInCart) return;
-    const disc = Math.max(0, Number(discountVal) || 0);
+    const disc = Math.max(0, this.parseNumber(discountVal, 0));
     itemInCart.discount = disc;
     itemInCart.total = Math.max(0, (itemInCart.qty * itemInCart.price) - disc);
 
@@ -1696,7 +1851,7 @@ const App = {
               <div class="cart-item-title" style="font-weight: 700;">${it.name}</div>
               <div style="display: flex; align-items: center; gap: 6px; margin-top: 4px;">
                 <span style="font-size: 0.76rem; color: var(--text-secondary);">السعر:</span>
-                <input type="number" id="cart-price-${it.id}" min="0" value="${it.price}" 
+                <input type="text" inputmode="decimal" id="cart-price-${it.id}" value="${it.price}" 
                        oninput="App.updateCartItemPrice('${it.id}', this.value)" 
                        style="width: 76px; height: 26px; padding: 2px 6px; font-size: 0.85rem; font-weight: 800; background: rgba(15, 23, 42, 0.9); border: 1px solid var(--border-subtle); color: var(--emerald-neon); border-radius: 4px; text-align: center;" 
                        title="اكتب سعر البيع يدوياً">
@@ -1704,7 +1859,7 @@ const App = {
               </div>
               <div style="display: flex; align-items: center; gap: 6px; margin-top: 6px;">
                 <span style="font-size: 0.75rem; color: var(--gold); font-weight: 600;">خصم الصنف:</span>
-                <input type="number" id="cart-disc-${it.id}" min="0" value="${it.discount || 0}" 
+                <input type="text" inputmode="decimal" id="cart-disc-${it.id}" value="${it.discount || 0}" 
                        oninput="App.updateCartItemDiscount('${it.id}', this.value)" 
                        style="width: 70px; height: 26px; padding: 2px 6px; font-size: 0.8rem; background: rgba(15, 23, 42, 0.8); border: 1px solid ${it.discount > 0 ? 'var(--gold)' : 'var(--border-subtle)'}; color: ${it.discount > 0 ? 'var(--gold)' : 'var(--text-white)'}; border-radius: 4px; text-align: center;" 
                        placeholder="0" title="خصم بالجنيه على هذا الصنف">
@@ -1714,7 +1869,7 @@ const App = {
             <div class="cart-item-controls" style="display: flex; flex-direction: column; align-items: flex-end; gap: 6px;">
               <div style="display: flex; align-items: center; gap: 4px;">
                 <button type="button" class="cart-qty-btn" onclick="App.updateCartQty('${it.id}', -1)">-</button>
-                <input type="number" id="cart-qty-${it.id}" min="1" value="${it.qty}" 
+                <input type="text" inputmode="numeric" id="cart-qty-${it.id}" value="${it.qty}" 
                        oninput="App.updateCartItemQtyInput('${it.id}', this.value)" 
                        style="width: 44px; height: 28px; padding: 2px; font-size: 0.9rem; font-weight: 800; background: rgba(15, 23, 42, 0.9); border: 1px solid var(--border-subtle); color: var(--text-white); border-radius: 4px; text-align: center;" 
                        title="اكتب الكمية يدوياً">
@@ -1745,7 +1900,7 @@ const App = {
     const subtotal = this.currentCart.items.reduce((sum, i) => sum + i.total, 0);
 
     const discountInput = document.getElementById('cart-discount-input');
-    const invoiceDiscount = discountInput ? (Number(discountInput.value) || 0) : 0;
+    const invoiceDiscount = discountInput ? this.parseNumber(discountInput.value, 0) : 0;
     this.currentCart.discount = invoiceDiscount;
 
     const grandTotal = Math.max(0, subtotal - invoiceDiscount);
@@ -1755,8 +1910,8 @@ const App = {
     const hasCustomer = !!this.currentCart.customerId;
 
     let paid;
-    if (paidInput && paidInput.value !== '') {
-      paid = Number(paidInput.value);
+    if (paidInput && String(paidInput.value).trim() !== '') {
+      paid = this.parseNumber(paidInput.value, 0);
     } else {
       // If customer is selected, default to 0 paid (credit / آجل) so remaining = grandTotal
       // If no customer (walk-in cash customer), default to full cash
@@ -3975,12 +4130,12 @@ const App = {
   saveNewItem() {
     const name = document.getElementById('item-name').value.trim();
     const category = document.getElementById('item-category')?.value || 'محلي';
-    const barcode = document.getElementById('item-barcode').value.trim();
+    const barcode = this.convertArabicNumbers(document.getElementById('item-barcode').value).trim();
     const icon = '📦';
-    const cartonsInStock = Number(document.getElementById('item-cartons').value) || 0;
-    const reorderLevel = Number(document.getElementById('item-reorder').value) || 15;
-    const purchasePrice = Number(document.getElementById('item-buy-price').value) || 0;
-    const sellingPrice = Number(document.getElementById('item-sell-price').value) || 0;
+    const cartonsInStock = this.parseNumber(document.getElementById('item-cartons').value, 0);
+    const reorderLevel = this.parseNumber(document.getElementById('item-reorder').value, 15);
+    const purchasePrice = this.parseNumber(document.getElementById('item-buy-price').value, 0);
+    const sellingPrice = this.parseNumber(document.getElementById('item-sell-price').value, 0);
 
     if (!name || !barcode) {
       this.showToast('يرجى ملء اسم الصنف وكود الباركود', 'error');
@@ -4089,11 +4244,11 @@ const App = {
 
     item.name = document.getElementById('edit-item-name').value.trim();
     item.category = document.getElementById('edit-item-category')?.value || 'محلي';
-    item.barcode = document.getElementById('edit-item-barcode').value.trim();
-    item.cartonsInStock = Number(document.getElementById('edit-item-cartons').value) || 0;
-    item.reorderLevel = Number(document.getElementById('edit-item-reorder').value) || 15;
-    item.purchasePrice = Number(document.getElementById('edit-item-buy').value) || 0;
-    item.sellingPrice = Number(document.getElementById('edit-item-sell').value) || 0;
+    item.barcode = this.convertArabicNumbers(document.getElementById('edit-item-barcode').value).trim();
+    item.cartonsInStock = this.parseNumber(document.getElementById('edit-item-cartons').value, 0);
+    item.reorderLevel = this.parseNumber(document.getElementById('edit-item-reorder').value, 15);
+    item.purchasePrice = this.parseNumber(document.getElementById('edit-item-buy').value, 0);
+    item.sellingPrice = this.parseNumber(document.getElementById('edit-item-sell').value, 0);
 
     this.syncDB();
     if (window.FDB) window.FDB.updateDocument('items', itemId, item);
@@ -4313,11 +4468,11 @@ const App = {
     if (!item) return;
 
     const availableInput = document.getElementById('restock-available-qty');
-    const currentQty = availableInput !== null ? Math.max(0, Number(availableInput.value) || 0) : (Number(item.cartonsInStock) || 0);
+    const currentQty = availableInput !== null ? Math.max(0, this.parseNumber(availableInput.value, 0)) : this.parseNumber(item.cartonsInStock, 0);
     const currentBuy = Number(item.purchasePrice) || 0;
-    const newQty = Math.max(0, Number(document.getElementById('restock-new-qty')?.value) || 0);
-    const newBuy = Math.max(0, Number(document.getElementById('restock-new-buy')?.value) || 0);
-    const newSell = Math.max(0, Number(document.getElementById('restock-new-sell')?.value) || 0);
+    const newQty = Math.max(0, this.parseNumber(document.getElementById('restock-new-qty')?.value, 0));
+    const newBuy = Math.max(0, this.parseNumber(document.getElementById('restock-new-buy')?.value, 0));
+    const newSell = Math.max(0, this.parseNumber(document.getElementById('restock-new-sell')?.value, 0));
 
     // Update the top stat card to reflect any manual adjustment in available quantity
     const curQtyEl = document.getElementById('restock-cur-qty');
@@ -4358,12 +4513,12 @@ const App = {
     if (!item) return;
 
     const availableInput = document.getElementById('restock-available-qty');
-    const currentQty = availableInput !== null ? Math.max(0, Number(availableInput.value) || 0) : (Number(item.cartonsInStock) || 0);
+    const currentQty = availableInput !== null ? Math.max(0, this.parseNumber(availableInput.value, 0)) : this.parseNumber(item.cartonsInStock, 0);
     const currentBuy = Number(item.purchasePrice) || 0;
-    const newQty = Math.max(0, Number(document.getElementById('restock-new-qty')?.value) || 0);
-    const newBuy = Math.max(0, Number(document.getElementById('restock-new-buy')?.value) || 0);
-    const newSell = Math.max(0, Number(document.getElementById('restock-new-sell')?.value) || 0);
-    const newReorder = Math.max(1, Number(document.getElementById('restock-new-reorder')?.value) || (item.reorderLevel || 5));
+    const newQty = Math.max(0, this.parseNumber(document.getElementById('restock-new-qty')?.value, 0));
+    const newBuy = Math.max(0, this.parseNumber(document.getElementById('restock-new-buy')?.value, 0));
+    const newSell = Math.max(0, this.parseNumber(document.getElementById('restock-new-sell')?.value, 0));
+    const newReorder = Math.max(1, this.parseNumber(document.getElementById('restock-new-reorder')?.value, item.reorderLevel || 5));
 
     const totalQty = currentQty + newQty;
     let wac = currentBuy;
@@ -4575,9 +4730,9 @@ const App = {
 
   saveNewCustomer() {
     const name = document.getElementById('new-cust-name').value.trim();
-    const phone = document.getElementById('new-cust-phone').value.trim();
+    const phone = this.convertArabicNumbers(document.getElementById('new-cust-phone').value).trim();
     const area = document.getElementById('new-cust-area').value.trim() || 'بدون عنوان';
-    const debt = Number(document.getElementById('new-cust-debt').value) || 0;
+    const debt = this.parseNumber(document.getElementById('new-cust-debt').value, 0);
 
     if (!name || !phone) {
       this.showToast('يرجى ملء اسم العميل ورقم الموبايل', 'error');
@@ -4650,7 +4805,7 @@ const App = {
     const customer = this.db.customers.find(c => c.id === custId);
     if (!customer) return;
 
-    const amount = Number(document.getElementById('receipt-amount')?.value);
+    const amount = this.parseNumber(document.getElementById('receipt-amount')?.value, 0);
     const notes = document.getElementById('receipt-notes')?.value || 'سند قبض';
 
     if (!amount || amount <= 0) {
@@ -4879,9 +5034,9 @@ const App = {
     if (!customer) return;
 
     customer.name = document.getElementById('edit-cust-name').value.trim();
-    customer.phone = document.getElementById('edit-cust-phone').value.trim();
+    customer.phone = this.convertArabicNumbers(document.getElementById('edit-cust-phone').value).trim();
     customer.area = document.getElementById('edit-cust-area').value.trim();
-    customer.currentDebt = Number(document.getElementById('edit-cust-debt').value) || 0;
+    customer.currentDebt = this.parseNumber(document.getElementById('edit-cust-debt').value, 0);
 
     this.syncDB();
     if (window.FDB) window.FDB.updateDocument('customers', custId, customer);
@@ -6491,7 +6646,7 @@ const App = {
 
   saveNewTreasuryReceipt(receiptNo) {
     const type = document.getElementById('new-rec-type')?.value;
-    const amount = Number(document.getElementById('new-rec-amount')?.value) || 0;
+    const amount = this.parseNumber(document.getElementById('new-rec-amount')?.value, 0);
     const receiver = document.getElementById('new-rec-receiver')?.value.trim() || (this.db.currentUser ? this.db.currentUser.name : 'حسام');
     const notes = document.getElementById('new-rec-notes')?.value.trim() || 'سند قبض بالخزينة';
 
@@ -7009,7 +7164,7 @@ const App = {
           <div class="notif-content">
             <div class="notif-title">${n.title}</div>
             <div class="notif-desc">${n.desc}</div>
-            <div class="notif-time">${n.time}</div>
+            <div class="notif-time">${this.getNotificationTimeDisplay(n)}</div>
           </div>
           <div class="notif-actions" style="display: flex; gap: 8px; align-items: center; flex-shrink: 0; flex-wrap: wrap;">
             ${!n.read ? `
@@ -7166,7 +7321,7 @@ const App = {
     ctx.fillText('التوقيت:', colLeftStartX, row1Y);
     ctx.fillStyle = '#0f172a';
     ctx.font = 'bold 12px Cairo, sans-serif';
-    ctx.fillText(notif.time || 'الآن', colLeftValX, row1Y);
+    ctx.fillText(this.getNotificationTimeDisplay(notif), colLeftValX, row1Y);
 
     // Row 2 - Right: نوع الحركة
     ctx.font = '12px Cairo, sans-serif';
@@ -7377,11 +7532,17 @@ const App = {
   },
 
   addNotification(notif) {
+    const now = new Date();
+    const formatted = this.formatDateTime(now);
     const newN = {
       id: `notif_${Date.now()}`,
       title: notif.title,
       desc: notif.desc,
-      time: 'الآن',
+      timestamp: Date.now(),
+      date: formatted.dateOnly,
+      time: formatted.timeShort,
+      dateTime: formatted.fullShort,
+      localTimestamp: now.toISOString(),
       type: notif.type || 'info',
       read: false
     };
