@@ -2121,6 +2121,169 @@ const App = {
   // ==========================================
   // INVOICE RECEIPT GENERATION & EXPORT
   // ==========================================
+  // قالب توليد كود HTML للفاتورة المتطابق 100% مع التصميم المرفق والريسبونسيف لكافة الأجهزة
+  renderInvoiceReceiptHTML(data, captureId = 'thermal-receipt-capture') {
+    const {
+      invoiceNo = 'INV-0000',
+      dateTimeStr = '',
+      customerName = 'عميل مسجل',
+      paymentMethodText = 'كاش مسدد بالكامل',
+      paymentStatusColor = '#16a34a',
+      items = [],
+      grossTotal = 0,
+      totalItemDiscounts = 0,
+      invoiceDiscount = 0,
+      totalDiscount = 0,
+      grandTotal = 0,
+      prevDebt = 0,
+      paid = 0,
+      remaining = 0,
+      paidFromOldDebt = 0,
+      paidForInvoice = 0,
+      finalDebt = 0,
+      seller = 'حسام حسني'
+    } = data;
+
+    const totalItemsCount = items.length;
+    const totalCartons = items.reduce((sum, it) => sum + Number(it.qty || 0), 0);
+    const hasDiscount = totalDiscount > 0;
+
+    return `
+      <div id="${captureId}" class="receipt-wrapper">
+        
+        <!-- Header -->
+        <div class="receipt-header">
+          <div class="receipt-title">
+            <span>${this.db?.settings?.businessName || 'مؤسسة الدخان والسجائر ERP'}</span>
+            <span>🚬</span>
+          </div>
+          <div class="receipt-subtitle">تجارة الجملة والتجزئة • سجائر محلية ومستوردة</div>
+          <div class="receipt-subtitle details">س.ت: 104928 • هاتف: ${this.db?.settings?.phone || '01150551500'}</div>
+        </div>
+
+        <!-- Metadata (2 Columns Grid) -->
+        <div class="receipt-meta-grid">
+          <div class="receipt-meta-col right">
+            <div class="receipt-meta-row">
+              <span class="receipt-meta-label">رقم الفاتورة:</span>
+              <strong class="receipt-meta-val inv-no">${invoiceNo}</strong>
+            </div>
+            <div class="receipt-meta-row">
+              <span class="receipt-meta-label">اسم العميل/التاجر:</span>
+              <strong class="receipt-meta-val cust-name">${customerName || 'عميل مسجل'}</strong>
+            </div>
+          </div>
+          <div class="receipt-meta-col left">
+            <div class="receipt-meta-row">
+              <span class="receipt-meta-label">التاريخ والوقت:</span>
+              <strong class="receipt-meta-val date-time">${dateTimeStr}</strong>
+            </div>
+            <div class="receipt-meta-row">
+              <span class="receipt-meta-label">طريقة الدفع:</span>
+              <strong class="receipt-meta-val payment-method" style="color: ${paymentStatusColor};">${paymentMethodText}</strong>
+            </div>
+          </div>
+        </div>
+
+        <!-- Items Table -->
+        <table class="receipt-table">
+          <thead>
+            <tr>
+              <th class="col-item">الصنف</th>
+              <th class="col-unit">الوحدة</th>
+              <th class="col-qty">الكمية</th>
+              <th class="col-price">السعر</th>
+              <th class="col-total">الإجمالي</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${items.map(it => `
+              <tr>
+                <td class="col-item">
+                  <div class="item-name">${it.name}</div>
+                  ${Number(it.discount) > 0 ? `<div class="item-discount-tag">(خصم صنف: -${this.formatMoney(it.discount)} ج.م)</div>` : ''}
+                </td>
+                <td class="col-unit">قروصة</td>
+                <td class="col-qty">${it.qty}</td>
+                <td class="col-price">${this.formatMoney(it.price)}</td>
+                <td class="col-total">${this.formatMoney(it.total)}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+
+        <!-- Summary Banner: Total items and cartons (Matches Screenshot) -->
+        <div class="receipt-items-count-banner">
+          إجمالي عدد الأصناف بالفاتورة: ${totalItemsCount} أصناف (${totalCartons} قروصة)
+        </div>
+
+        <!-- Financial Totals Breakdown -->
+        <div class="receipt-totals">
+          <div class="receipt-total-row subtotal">
+            <span class="lbl">المجموع قبل الخصم:</span>
+            <span class="val">${this.formatMoney(grossTotal)} ج.م</span>
+          </div>
+
+          ${hasDiscount ? `
+            <div class="receipt-total-row discount">
+              <span class="lbl">الخصم المطبق:</span>
+              <span class="val">- ${this.formatMoney(totalDiscount)} ج.م</span>
+            </div>
+          ` : ''}
+
+          <div class="receipt-total-row grand">
+            <span class="lbl">إجمالي قيمة الفاتورة الجديدة:</span>
+            <span class="val">${this.formatMoney(grandTotal)} ج.م</span>
+          </div>
+
+          <div class="receipt-total-row prev-debt">
+            <span class="lbl">المديونية السابقة للعميل:</span>
+            <span class="val">${this.formatMoney(prevDebt)} ج.م</span>
+          </div>
+
+          <div class="receipt-total-row total-debt">
+            <span class="lbl">إجمالي الدين القديم + الجديد:</span>
+            <span class="val">${this.formatMoney(prevDebt + grandTotal)} ج.م</span>
+          </div>
+
+          <div class="receipt-total-row paid">
+            <span class="lbl">المبلغ المدفوع كاش الآن:</span>
+            <span class="val">${this.formatMoney(paid)} ج.م</span>
+          </div>
+
+          ${paidFromOldDebt > 0 ? `
+            <div class="receipt-total-row paid-part-inv">
+              <span class="lbl">تم سداد للفاتورة:</span>
+              <span class="val">${this.formatMoney(paidForInvoice || (paid - paidFromOldDebt))} ج.م</span>
+            </div>
+            <div class="receipt-total-row paid-part-old">
+              <span class="lbl">تم سداد من الدين السابق:</span>
+              <span class="val">${this.formatMoney(paidFromOldDebt)} ج.م</span>
+            </div>
+          ` : `
+            <div class="receipt-total-row remaining">
+              <span class="lbl">المتبقي من الفاتورة الجديدة:</span>
+              <span class="val">${this.formatMoney(remaining)} ج.م</span>
+            </div>
+          `}
+
+          <!-- Final Total Outstanding Balance Box -->
+          <div class="receipt-total-highlight">
+            <span class="lbl">إجمالي الرصيد المتبقي المستحق على العميل:</span>
+            <span class="val">${this.formatMoney(finalDebt)} ج.م</span>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="receipt-footer">
+          <div class="receipt-footer-note">شكراً لتعاملكم معنا! البضاعة المباعة لا تُرد بعد الاستلام.</div>
+          <div class="receipt-footer-seller">البائع: ${seller}</div>
+        </div>
+
+      </div>
+    `;
+  },
+
   // زر "فتح الفاتورة" وتوليد المعاينة الحية
   openInvoicePreviewModal() {
     if (this.currentCart.items.length === 0) {
@@ -2163,154 +2326,46 @@ const App = {
     if (isNaN(paid)) paid = 0;
 
     const remaining = Math.max(0, grandTotal - paid);
-    const totalItemsCount = this.currentCart.items.length;
-    const totalCartons = this.currentCart.items.reduce((sum, it) => sum + Number(it.qty || 0), 0);
-
     const custName = customer.name;
     const prevDebt = Number(customer.currentDebt || 0);
     const invoiceNo = `INV-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
     const nowStr = this.formatDateTime(new Date()).full;
     const seller = this.activeRepForPOS ? this.activeRepForPOS.name : (this.db.currentUser?.name || 'حسام حسني');
     const paymentMethodText = remaining > 0 ? (paid > 0 ? 'دفعة جزئية' : 'آجل بالكامل') : 'كاش مسدد بالكامل';
+    const paymentStatusColor = remaining > 0 ? (paid > 0 ? '#d97706' : '#dc2626') : '#16a34a';
+
+    const paidFromOldDebt = (paid > grandTotal && prevDebt > 0) ? Math.min(prevDebt, paid - grandTotal) : 0;
+    const paidForInvoice = (paid > grandTotal) ? grandTotal : paid;
+    const finalDebt = Math.max(0, prevDebt + remaining - paidFromOldDebt);
+
+    const receiptHtml = this.renderInvoiceReceiptHTML({
+      invoiceNo,
+      dateTimeStr: nowStr,
+      customerName: custName,
+      paymentMethodText,
+      paymentStatusColor,
+      items: this.currentCart.items,
+      grossTotal,
+      totalItemDiscounts,
+      invoiceDiscount: discount,
+      totalDiscount: totalDiscounts,
+      grandTotal,
+      prevDebt,
+      paid,
+      remaining,
+      paidFromOldDebt,
+      paidForInvoice,
+      finalDebt,
+      seller
+    }, 'thermal-receipt-capture');
 
     const modalHtml = `
       <div class="modal-header">
         <h3>🧾 معاينة الفاتورة الإلكترونية</h3>
         <button class="modal-close-btn" onclick="App.closeModal()">&times;</button>
       </div>
-      <div class="modal-body" style="background: #f8fafc; padding: 16px;">
-        
-        <!-- Thermal Receipt Box (Matching Image 2) -->
-        <div id="thermal-receipt-capture" class="receipt-wrapper" style="background: #ffffff; color: #0f172a; padding: 24px 20px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.12); font-family: 'Cairo', sans-serif; max-width: 480px; width: 100%; box-sizing: border-box; margin: 0 auto; border: 1px solid #e2e8f0;">
-          
-          <!-- Header -->
-          <div class="receipt-header" style="text-align: center; border-bottom: 2px dashed #cbd5e1; padding-bottom: 12px; margin-bottom: 14px;">
-            <div class="receipt-title" style="font-size: 1.35rem; font-weight: 900; color: #040609; display: flex; align-items: center; justify-content: center; gap: 8px;">
-              <span>🚬</span> <span>${this.db.settings.businessName || 'مؤسسة الدخان والسجائر ERP'}</span>
-            </div>
-            <div class="receipt-subtitle" style="font-size: 0.85rem; color: #475569; font-weight: 600; margin-top: 4px;">تجارة الجملة والتجزئة • سجائر محلية ومستوردة</div>
-            <div class="receipt-subtitle" style="font-size: 0.8rem; color: #64748b; margin-top: 2px;">س.ت: 104928 • هاتف: ${this.db.settings.phone || '01150551500'}</div>
-          </div>
-
-          <!-- Metadata 2 Columns Grid -->
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; margin-bottom: 14px; font-size: 0.84rem; border-bottom: 1px dashed #cbd5e1; padding-bottom: 10px;">
-            <div>
-              <span style="color: #64748b;">رقم الفاتورة:</span>
-              <strong style="color: #0f172a; margin-right: 4px; font-family: monospace;">${invoiceNo}</strong>
-            </div>
-            <div style="text-align: left;">
-              <span style="color: #64748b;">التاريخ والوقت:</span>
-              <strong style="color: #0f172a; margin-right: 4px; direction: ltr; display: inline-block;">${nowStr}</strong>
-            </div>
-            <div>
-              <span style="color: #64748b;">اسم العميل/التاجر:</span>
-              <strong style="color: #0f172a; margin-right: 4px;">${custName}</strong>
-            </div>
-            <div style="text-align: left;">
-              <span style="color: #64748b;">طريقة الدفع:</span>
-              <strong style="color: ${remaining > 0 ? '#ea580c' : '#16a34a'}; margin-right: 4px;">${paymentMethodText}</strong>
-            </div>
-          </div>
-
-          <!-- Items Table -->
-          <table class="receipt-table" style="width: 100%; border-collapse: collapse; margin-bottom: 12px;">
-            <thead>
-              <tr style="border-bottom: 2px solid #cbd5e1; color: #475569; font-size: 0.82rem;">
-                <th style="text-align: right; padding: 6px 4px;">الصنف</th>
-                <th style="text-align: center; padding: 6px 4px;">الوحدة</th>
-                <th style="text-align: center; padding: 6px 4px;">الكمية</th>
-                <th style="text-align: center; padding: 6px 4px;">السعر</th>
-                <th style="text-align: left; padding: 6px 4px;">الإجمالي</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${this.currentCart.items.map(it => `
-                <tr style="border-bottom: 1px dotted #e2e8f0; font-size: 0.84rem;">
-                  <td style="text-align: right; padding: 8px 4px; font-weight: 800; color: #0f172a;">
-                    ${it.name}
-                    ${it.discount > 0 ? `<div style="font-size: 0.74rem; color: #16a34a; font-weight: 700; margin-top: 2px;">(خصم صنف: -${this.formatMoney(it.discount)} ج.م)</div>` : ''}
-                  </td>
-                  <td style="text-align: center; padding: 8px 4px; color: #64748b;">قروصة</td>
-                  <td style="text-align: center; padding: 8px 4px; font-weight: 800; color: #0f172a;">${it.qty}</td>
-                  <td style="text-align: center; padding: 8px 4px; color: #334155;">${this.formatMoney(it.price)}</td>
-                  <td style="text-align: left; padding: 8px 4px; font-weight: 800; color: #0f172a;">${this.formatMoney(it.total)}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-
-          <!-- Items Count Banner (Matches Image 2) -->
-          <div class="receipt-items-count-banner" style="background: #fffbeb; border: 1px solid #fde68a; color: #92400e; font-weight: 800; font-size: 0.92rem; padding: 8px 14px; border-radius: 8px; text-align: center; margin: 12px 0 16px 0;">
-            إجمالي عدد الأصناف بالفاتورة: ${totalItemsCount} أصناف (${totalCartons} قروصة)
-          </div>
-
-          <!-- Summary Rows (Matches Image 2) -->
-          <div class="receipt-totals" style="display: flex; flex-direction: column; gap: 8px; font-size: 0.88rem; margin-bottom: 14px;">
-            <div style="display: flex; justify-content: space-between;">
-              <span style="color: #64748b;">المجموع قبل الخصم:</span>
-              <span style="color: #334155;">${this.formatMoney(grossTotal)} ج.م</span>
-            </div>
-            ${totalItemDiscounts > 0 ? `
-              <div style="display: flex; justify-content: space-between; color: #16a34a; font-weight: 700;">
-                <span>إجمالي خصم الأصناف:</span>
-                <span>- ${this.formatMoney(totalItemDiscounts)} ج.م</span>
-              </div>
-            ` : ''}
-            ${discount > 0 ? `
-              <div style="display: flex; justify-content: space-between; color: #ea580c; font-weight: 700;">
-                <span>خصم الفاتورة:</span>
-                <span>- ${this.formatMoney(discount)} ج.م</span>
-              </div>
-            ` : ''}
-            ${(totalItemDiscounts > 0 && discount > 0) ? `
-              <div style="display: flex; justify-content: space-between; color: #10b981; font-weight: 800; background: #ecfdf5; padding: 4px 8px; border-radius: 6px;">
-                <span>إجمالي كل الخصومات:</span>
-                <span>- ${this.formatMoney(totalDiscounts)} ج.م</span>
-              </div>
-            ` : ''}
-            <div style="display: flex; justify-content: space-between; font-weight: 900; font-size: 1.05rem; color: #040609;">
-              <span>إجمالي قيمة الفاتورة الجديدة:</span>
-              <span>${this.formatMoney(grandTotal)} ج.م</span>
-            </div>
-            <div style="display: flex; justify-content: space-between; color: #dc2626; font-weight: 800;">
-              <span>المديونية السابقة للعميل:</span>
-              <span>${this.formatMoney(prevDebt)} ج.م</span>
-            </div>
-            <div style="display: flex; justify-content: space-between; color: #6366f1; font-weight: 900; font-size: 0.96rem; background: rgba(99, 102, 241, 0.07); padding: 4px 8px; border-radius: 6px;">
-              <span>إجمالي الدين القديم + الجديد:</span>
-              <span>${this.formatMoney(prevDebt + grandTotal)} ج.م</span>
-            <div style="display: flex; justify-content: space-between; color: #059669; font-weight: 800;">
-              <span>المبلغ المدفوع كاش الآن:</span>
-              <span>${this.formatMoney(paid)} ج.م</span>
-            </div>
-            ${(paid > grandTotal && prevDebt > 0) ? `
-              <div style="display: flex; justify-content: space-between; color: #0284c7; font-weight: 800; background: #f0f9ff; padding: 4px 8px; border-radius: 6px;">
-                <span>تم سداد للفاتورة:</span>
-                <span>${this.formatMoney(Math.min(paid, grandTotal))} ج.م</span>
-              </div>
-              <div style="display: flex; justify-content: space-between; color: #059669; font-weight: 800; background: #ecfdf5; padding: 4px 8px; border-radius: 6px;">
-                <span>تم سداد من الدين السابق:</span>
-                <span>${this.formatMoney(Math.min(prevDebt, paid - grandTotal))} ج.م</span>
-              </div>
-            ` : `
-              <div style="display: flex; justify-content: space-between; color: #dc2626; font-weight: 800;">
-                <span>المتبقي من الفاتورة الجديدة:</span>
-                <span>${this.formatMoney(remaining)} ج.م</span>
-              </div>
-            `}
-            <div style="display: flex; justify-content: space-between; color: #b91c1c; font-weight: 900; font-size: 1.1rem; background: #fef2f2; padding: 6px 10px; border-radius: 6px; border: 1px solid #fee2e2;">
-              <span>إجمالي الرصيد المتبقي المستحق على العميل:</span>
-              <span>${this.formatMoney(Math.max(0, prevDebt + remaining - (paid > grandTotal ? Math.min(prevDebt, paid - grandTotal) : 0)))} ج.م</span>
-            </div>
-          </div>
-
-          <!-- Footer (Matches Image 2) -->
-          <div style="text-align: center; border-top: 1px dashed #cbd5e1; padding-top: 12px; margin-top: 10px; color: #64748b; font-size: 0.8rem;">
-            <div>شكراً لتعاملكم معنا! البضاعة المباعة لا تُرد بعد الاستلام.</div>
-            <div style="margin-top: 4px; font-weight: 700; color: #334155;">البائع: ${seller}</div>
-          </div>
-        </div>
-
+      <div class="modal-body receipt-modal-body" style="background: #f8fafc; padding: 16px;">
+        ${receiptHtml}
       </div>
       <div class="modal-footer" style="justify-content: space-between; flex-wrap: wrap; gap: 8px;">
         <div style="display: flex; gap: 8px; flex-wrap: wrap;">
@@ -2382,14 +2437,15 @@ const App = {
 
     const customer = inv.customerId ? (this.db.customers || []).find(c => c.id === inv.customerId) : null;
     const prevDebt = inv.previousDebt !== undefined ? Number(inv.previousDebt) : (customer ? Number(customer.currentDebt || 0) : 0);
-    const totalDueDebt = prevDebt + remaining;
+    const paidFromOldDebt = Number(inv.paidFromOldDebt || 0);
+    const finalDebt = inv.finalDebt !== undefined ? Number(inv.finalDebt) : Math.max(0, prevDebt + remaining - paidFromOldDebt);
     const paymentMethodText = remaining > 0 ? (paid > 0 ? 'دفعة جزئية' : 'آجل بالكامل') : 'كاش مسدد بالكامل';
-    const invoiceDiscount = Number(inv.discount || 0);
+    const paymentColor = remaining > 0 ? (paid > 0 ? '#d97706' : '#dc2626') : '#16a34a';
 
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     const width = 520;
-    const height = Math.max(720, 640 + (items.length * 38));
+    const height = Math.max(760, 680 + (items.length * 36) + (totalDiscount > 0 ? 24 : 0));
 
     canvas.width = width;
     canvas.height = height;
@@ -2398,17 +2454,17 @@ const App = {
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, width, height);
 
-    // Border
-    ctx.strokeStyle = '#cbd5e1';
+    // Subtle Outer Border
+    ctx.strokeStyle = '#e2e8f0';
     ctx.lineWidth = 1.5;
     ctx.strokeRect(10, 10, width - 20, height - 20);
 
     ctx.fillStyle = '#0f172a';
     ctx.textAlign = 'center';
 
-    // Header (Image 2)
+    // Header (Title, Subtitle, Info)
     ctx.font = 'bold 21px Cairo, sans-serif';
-    ctx.fillText(`🚬 ${this.db.settings.businessName || 'مؤسسة الدخان والسجائر ERP'}`, width / 2, 45);
+    ctx.fillText(`${this.db.settings.businessName || 'مؤسسة الدخان والسجائر ERP'} 🚬`, width / 2, 45);
 
     ctx.font = 'bold 12px Cairo, sans-serif';
     ctx.fillStyle = '#475569';
@@ -2418,16 +2474,16 @@ const App = {
     ctx.fillStyle = '#64748b';
     ctx.fillText(`س.ت: 104928 • هاتف: ${this.db.settings.phone || '01150551500'}`, width / 2, 86);
 
-    // Dashed divider line
+    // Dotted divider line
     ctx.strokeStyle = '#cbd5e1';
-    ctx.setLineDash([4, 4]);
+    ctx.setLineDash([3, 3]);
     ctx.beginPath();
     ctx.moveTo(25, 100);
     ctx.lineTo(width - 25, 100);
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // Invoice Meta (2 columns matching Image 2)
+    // Invoice Meta (2 columns matching screenshot)
     ctx.direction = 'rtl';
     ctx.textAlign = 'right';
     ctx.font = '12px Cairo, sans-serif';
@@ -2447,9 +2503,8 @@ const App = {
     ctx.fillText(inv.customerName || 'عميل مسجل', width - 125, 144);
 
     // Left Column
-    ctx.textAlign = 'right';
-    ctx.font = '12px Cairo, sans-serif';
     ctx.fillStyle = '#64748b';
+    ctx.font = '12px Cairo, sans-serif';
     ctx.fillText('التاريخ والوقت:', 245, 122);
 
     const dtObj = this.formatDateTime(inv.dateTime || inv.date || new Date());
@@ -2464,14 +2519,14 @@ const App = {
     ctx.fillStyle = '#64748b';
     ctx.font = '12px Cairo, sans-serif';
     ctx.fillText('طريقة الدفع:', 245, 144);
-    ctx.fillStyle = remaining > 0 ? '#ea580c' : '#16a34a';
+    ctx.fillStyle = paymentColor;
     ctx.font = 'bold 12px Cairo, sans-serif';
     ctx.fillText(paymentMethodText, 178, 144);
 
     // Table Header
     ctx.fillStyle = '#f8fafc';
     ctx.fillRect(25, 162, width - 50, 26);
-    ctx.strokeStyle = '#cbd5e1';
+    ctx.strokeStyle = '#e2e8f0';
     ctx.strokeRect(25, 162, width - 50, 26);
 
     ctx.fillStyle = '#475569';
@@ -2515,7 +2570,7 @@ const App = {
       ctx.textAlign = 'left';
       ctx.fillText(`${this.formatMoney(item.total)}`, 35, currentY);
 
-      if (item.discount > 0) {
+      if (Number(item.discount) > 0) {
         currentY += 15;
         ctx.font = '10px Cairo, sans-serif';
         ctx.fillStyle = '#16a34a';
@@ -2533,7 +2588,7 @@ const App = {
       currentY += 26;
     });
 
-    // Summary Box: Total items and cartons banner (Matches Image 2)
+    // Summary Box: Total items and cartons banner (Matches Screenshot)
     ctx.fillStyle = '#fffbeb';
     ctx.fillRect(25, currentY, width - 50, 30);
     ctx.strokeStyle = '#fde68a';
@@ -2545,10 +2600,10 @@ const App = {
     ctx.fillText(`إجمالي عدد الأصناف بالفاتورة: ${totalItemsCount} أصناف (${totalCartons} قروصة)`, width / 2, currentY + 20);
     currentY += 44;
 
-    // Financial Summary Rows (Matching Image 2)
-    const drawRow = (label, valStr, color = '#334155', isBold = false) => {
+    // Financial Summary Rows (Matching Screenshot)
+    const drawRow = (label, valStr, color = '#334155', isBold = false, labelColor = '#475569') => {
       ctx.textAlign = 'right';
-      ctx.fillStyle = '#64748b';
+      ctx.fillStyle = labelColor;
       ctx.font = isBold ? 'bold 12px Cairo, sans-serif' : '12px Cairo, sans-serif';
       ctx.fillText(label, width - 35, currentY);
 
@@ -2559,42 +2614,36 @@ const App = {
       currentY += 22;
     };
 
-    drawRow('المجموع قبل الخصم:', `${this.formatMoney(grossTotal)} ج.م`, '#334155', false);
-    if (totalItemDiscounts > 0) {
-      drawRow('إجمالي خصم الأصناف:', `- ${this.formatMoney(totalItemDiscounts)} ج.م`, '#16a34a', true);
+    drawRow('المجموع قبل الخصم:', `${this.formatMoney(grossTotal)} ج.م`, '#334155', false, '#475569');
+    if (totalDiscount > 0) {
+      drawRow('الخصم المطبق:', `- ${this.formatMoney(totalDiscount)} ج.م`, '#059669', true, '#059669');
     }
-    if (invoiceDiscount > 0) {
-      drawRow('خصم الفاتورة:', `- ${this.formatMoney(invoiceDiscount)} ج.م`, '#ea580c', true);
-    }
-    if (totalItemDiscounts > 0 && invoiceDiscount > 0) {
-      drawRow('إجمالي كل الخصومات:', `- ${this.formatMoney(totalDiscount)} ج.م`, '#10b981', true);
-    }
-    drawRow('إجمالي قيمة الفاتورة الجديدة:', `${this.formatMoney(grandTotal)} ج.م`, '#040609', true);
-    drawRow('المديونية السابقة للعميل:', `${this.formatMoney(prevDebt)} ج.م`, '#dc2626', true);
-    drawRow('إجمالي الدين القديم + الجديد:', `${this.formatMoney(prevDebt + grandTotal)} ج.م`, '#6366f1', true);
-    drawRow('المبلغ المدفوع كاش الآن:', `${this.formatMoney(paid)} ج.م`, '#059669', true);
-    drawRow('المتبقي من الفاتورة الجديدة:', `${this.formatMoney(remaining)} ج.م`, '#dc2626', true);
+    drawRow('إجمالي قيمة الفاتورة الجديدة:', `${this.formatMoney(grandTotal)} ج.م`, '#d97706', true, '#0f172a');
+    drawRow('المديونية السابقة للعميل:', `${this.formatMoney(prevDebt)} ج.م`, '#dc2626', true, '#dc2626');
+    drawRow('إجمالي الدين القديم + الجديد:', `${this.formatMoney(prevDebt + grandTotal)} ج.م`, '#7c3aed', true, '#7c3aed');
+    drawRow('المبلغ المدفوع كاش الآن:', `${this.formatMoney(paid)} ج.م`, '#16a34a', true, '#475569');
+    drawRow('المتبقي من الفاتورة الجديدة:', `${this.formatMoney(remaining)} ج.م`, '#dc2626', true, '#dc2626');
 
-    // Final total debt due box
+    // Final total debt due box (Soft red highlight box)
     ctx.fillStyle = '#fef2f2';
-    ctx.fillRect(25, currentY - 4, width - 50, 30);
+    ctx.fillRect(25, currentY - 4, width - 50, 32);
     ctx.strokeStyle = '#fee2e2';
-    ctx.strokeRect(25, currentY - 4, width - 50, 30);
+    ctx.strokeRect(25, currentY - 4, width - 50, 32);
 
     ctx.textAlign = 'right';
     ctx.fillStyle = '#b91c1c';
     ctx.font = 'bold 12px Cairo, sans-serif';
-    ctx.fillText('إجمالي الرصيد المتبقي المستحق على العميل:', width - 35, currentY + 16);
+    ctx.fillText('إجمالي الرصيد المتبقي المستحق على العميل:', width - 35, currentY + 17);
 
     ctx.textAlign = 'left';
     ctx.fillStyle = '#b91c1c';
     ctx.font = 'bold 14px Cairo, sans-serif';
-    ctx.fillText(`${this.formatMoney(totalDueDebt)} ج.م`, 35, currentY + 16);
-    currentY += 40;
+    ctx.fillText(`${this.formatMoney(finalDebt)} ج.م`, 35, currentY + 17);
+    currentY += 42;
 
-    // Footer (Matches Image 2)
+    // Footer
     ctx.strokeStyle = '#cbd5e1';
-    ctx.setLineDash([4, 4]);
+    ctx.setLineDash([3, 3]);
     ctx.beginPath();
     ctx.moveTo(25, currentY);
     ctx.lineTo(width - 25, currentY);
@@ -2607,7 +2656,7 @@ const App = {
     ctx.textAlign = 'center';
     ctx.fillText('شكراً لتعاملكم معنا! البضاعة المباعة لا تُرد بعد الاستلام.', width / 2, currentY);
     ctx.font = 'bold 11px Cairo, sans-serif';
-    ctx.fillStyle = '#334155';
+    ctx.fillStyle = '#475569';
     ctx.fillText(`البائع: ${inv.sellerName || (this.db.currentUser?.name || 'حسام حسني')}`, width / 2, currentY + 16);
 
     return canvas;
@@ -5383,8 +5432,6 @@ const App = {
     if (!inv) return;
 
     const items = inv.items || [];
-    const totalItemsCount = items.length;
-    const totalCartons = items.reduce((sum, it) => sum + Number(it.qty || 0), 0);
     const grossTotal = items.reduce((sum, it) => sum + (Number(it.qty) * Number(it.price)), 0);
     const totalItemDiscounts = items.reduce((sum, it) => sum + (Number(it.discount) || 0), 0);
     const totalDiscount = totalItemDiscounts + (Number(inv.discount) || 0);
@@ -5394,146 +5441,42 @@ const App = {
 
     const customer = inv.customerId ? (this.db.customers || []).find(c => c.id === inv.customerId) : null;
     const prevDebt = inv.previousDebt !== undefined ? Number(inv.previousDebt) : (customer ? Number(customer.currentDebt || 0) : 0);
+    const paidFromOldDebt = Number(inv.paidFromOldDebt || 0);
+    const paidForInvoice = inv.paidForInvoice || (paid - paidFromOldDebt);
+    const finalDebt = inv.finalDebt !== undefined ? Number(inv.finalDebt) : Math.max(0, prevDebt + remaining - paidFromOldDebt);
     const paymentMethodText = remaining > 0 ? (paid > 0 ? 'دفعة جزئية' : 'آجل بالكامل') : 'كاش مسدد بالكامل';
+    const paymentStatusColor = remaining > 0 ? (paid > 0 ? '#d97706' : '#dc2626') : '#16a34a';
     const dateTimeStr = this.formatDateTime(inv.dateTime || inv.date || new Date()).full;
     const seller = inv.sellerName || (this.db.currentUser?.name || 'حسام حسني');
+
+    const receiptHtml = this.renderInvoiceReceiptHTML({
+      invoiceNo: inv.id,
+      dateTimeStr,
+      customerName: inv.customerName || (customer ? customer.name : 'عميل مسجل'),
+      paymentMethodText,
+      paymentStatusColor,
+      items,
+      grossTotal,
+      totalItemDiscounts,
+      invoiceDiscount: Number(inv.discount || 0),
+      totalDiscount,
+      grandTotal,
+      prevDebt,
+      paid,
+      remaining,
+      paidFromOldDebt,
+      paidForInvoice,
+      finalDebt,
+      seller
+    }, 'view-invoice-capture');
 
     const modalHtml = `
       <div class="modal-header">
         <h3>🧾 تفاصيل الفاتورة #${inv.id}</h3>
         <button class="modal-close-btn" onclick="App.closeModal()">&times;</button>
       </div>
-      <div class="modal-body" style="background: #f8fafc; padding: 16px;">
-        <div id="view-invoice-capture" class="receipt-wrapper" style="background: #ffffff; color: #0f172a; padding: 24px 20px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.12); font-family: 'Cairo', sans-serif; max-width: 480px; width: 100%; box-sizing: border-box; margin: 0 auto; border: 1px solid #e2e8f0;">
-          
-          <!-- Header -->
-          <div class="receipt-header" style="text-align: center; border-bottom: 2px dashed #cbd5e1; padding-bottom: 12px; margin-bottom: 14px;">
-            <div class="receipt-title" style="font-size: 1.35rem; font-weight: 900; color: #040609; display: flex; align-items: center; justify-content: center; gap: 8px;">
-              <span>🚬</span> <span>${this.db.settings.businessName || 'مؤسسة الدخان والسجائر ERP'}</span>
-            </div>
-            <div class="receipt-subtitle" style="font-size: 0.85rem; color: #475569; font-weight: 600; margin-top: 4px;">تجارة الجملة والتجزئة • سجائر محلية ومستوردة</div>
-            <div class="receipt-subtitle" style="font-size: 0.8rem; color: #64748b; margin-top: 2px;">س.ت: 104928 • هاتف: ${this.db.settings.phone || '01150551500'}</div>
-          </div>
-
-          <!-- Metadata 2 Columns Grid -->
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; margin-bottom: 14px; font-size: 0.84rem; border-bottom: 1px dashed #cbd5e1; padding-bottom: 10px;">
-            <div>
-              <span style="color: #64748b;">رقم الفاتورة:</span>
-              <strong style="color: #0f172a; margin-right: 4px; font-family: monospace;">${inv.id}</strong>
-            </div>
-            <div style="text-align: left;">
-              <span style="color: #64748b;">التاريخ والوقت:</span>
-              <strong style="color: #0f172a; margin-right: 4px; direction: ltr; display: inline-block;">${dateTimeStr}</strong>
-            </div>
-            <div>
-              <span style="color: #64748b;">اسم العميل/التاجر:</span>
-              <strong style="color: #0f172a; margin-right: 4px;">${inv.customerName || 'عميل مسجل'}</strong>
-            </div>
-            <div style="text-align: left;">
-              <span style="color: #64748b;">طريقة الدفع:</span>
-              <strong style="color: ${remaining > 0 ? '#ea580c' : '#16a34a'}; margin-right: 4px;">${paymentMethodText}</strong>
-            </div>
-          </div>
-
-          <!-- Items Table -->
-          <table class="receipt-table" style="width: 100%; border-collapse: collapse; margin-bottom: 12px;">
-            <thead>
-              <tr style="border-bottom: 2px solid #cbd5e1; color: #475569; font-size: 0.82rem;">
-                <th style="text-align: right; padding: 6px 4px;">الصنف</th>
-                <th style="text-align: center; padding: 6px 4px;">الوحدة</th>
-                <th style="text-align: center; padding: 6px 4px;">الكمية</th>
-                <th style="text-align: center; padding: 6px 4px;">السعر</th>
-                <th style="text-align: left; padding: 6px 4px;">الإجمالي</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${items.map(it => `
-                <tr style="border-bottom: 1px dotted #e2e8f0; font-size: 0.84rem;">
-                  <td style="text-align: right; padding: 8px 4px; font-weight: 800; color: #0f172a;">
-                    ${it.name}
-                    ${it.discount > 0 ? `<div style="font-size: 0.74rem; color: #16a34a; font-weight: 700; margin-top: 2px;">(خصم صنف: -${this.formatMoney(it.discount)} ج.م)</div>` : ''}
-                  </td>
-                  <td style="text-align: center; padding: 8px 4px; color: #64748b;">قروصة</td>
-                  <td style="text-align: center; padding: 8px 4px; font-weight: 800; color: #0f172a;">${it.qty}</td>
-                  <td style="text-align: center; padding: 8px 4px; color: #334155;">${this.formatMoney(it.price)}</td>
-                  <td style="text-align: left; padding: 8px 4px; font-weight: 800; color: #0f172a;">${this.formatMoney(it.total)}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-
-          <!-- Items Count Banner (Matches Image 2) -->
-          <div class="receipt-items-count-banner" style="background: #fffbeb; border: 1px solid #fde68a; color: #92400e; font-weight: 800; font-size: 0.92rem; padding: 8px 14px; border-radius: 8px; text-align: center; margin: 12px 0 16px 0;">
-            إجمالي عدد الأصناف بالفاتورة: ${totalItemsCount} أصناف (${totalCartons} قروصة)
-          </div>
-
-          <!-- Summary Rows (Matches Image 2) -->
-          <div class="receipt-totals" style="display: flex; flex-direction: column; gap: 8px; font-size: 0.88rem; margin-bottom: 14px;">
-            <div style="display: flex; justify-content: space-between;">
-              <span style="color: #64748b;">المجموع قبل الخصم:</span>
-              <span style="color: #334155;">${this.formatMoney(grossTotal)} ج.م</span>
-            </div>
-            ${totalItemDiscounts > 0 ? `
-              <div style="display: flex; justify-content: space-between; color: #16a34a; font-weight: 700;">
-                <span>إجمالي خصم الأصناف:</span>
-                <span>- ${this.formatMoney(totalItemDiscounts)} ج.م</span>
-              </div>
-            ` : ''}
-            ${(Number(inv.discount) || 0) > 0 ? `
-              <div style="display: flex; justify-content: space-between; color: #ea580c; font-weight: 700;">
-                <span>خصم الفاتورة:</span>
-                <span>- ${this.formatMoney(inv.discount)} ج.م</span>
-              </div>
-            ` : ''}
-            ${(totalItemDiscounts > 0 && (Number(inv.discount) || 0) > 0) ? `
-              <div style="display: flex; justify-content: space-between; color: #10b981; font-weight: 800; background: #ecfdf5; padding: 4px 8px; border-radius: 6px;">
-                <span>إجمالي كل الخصومات:</span>
-                <span>- ${this.formatMoney(totalDiscount)} ج.م</span>
-              </div>
-            ` : ''}
-            <div style="display: flex; justify-content: space-between; font-weight: 900; font-size: 1.05rem; color: #040609;">
-              <span>إجمالي قيمة الفاتورة الجديدة:</span>
-              <span>${this.formatMoney(grandTotal)} ج.م</span>
-            </div>
-            <div style="display: flex; justify-content: space-between; color: #dc2626; font-weight: 800;">
-              <span>المديونية السابقة للعميل:</span>
-              <span>${this.formatMoney(prevDebt)} ج.م</span>
-            </div>
-            <div style="display: flex; justify-content: space-between; color: #6366f1; font-weight: 900; font-size: 0.96rem; background: rgba(99, 102, 241, 0.07); padding: 4px 8px; border-radius: 6px;">
-              <span>إجمالي الدين القديم + الجديد:</span>
-              <span>${this.formatMoney(prevDebt + grandTotal)} ج.م</span>
-            </div>
-            <div style="display: flex; justify-content: space-between; color: #059669; font-weight: 800;">
-              <span>المبلغ المدفوع كاش الآن:</span>
-              <span>${this.formatMoney(paid)} ج.م</span>
-            </div>
-            ${(Number(inv.paidFromOldDebt) || 0) > 0 ? `
-              <div style="display: flex; justify-content: space-between; color: #0284c7; font-weight: 800; background: #f0f9ff; padding: 4px 8px; border-radius: 6px;">
-                <span>تم سداد للفاتورة:</span>
-                <span>${this.formatMoney(inv.paidForInvoice || (paid - inv.paidFromOldDebt))} ج.م</span>
-              </div>
-              <div style="display: flex; justify-content: space-between; color: #059669; font-weight: 800; background: #ecfdf5; padding: 4px 8px; border-radius: 6px;">
-                <span>تم سداد من الدين السابق:</span>
-                <span>${this.formatMoney(inv.paidFromOldDebt)} ج.م</span>
-              </div>
-            ` : `
-              <div style="display: flex; justify-content: space-between; color: #dc2626; font-weight: 800;">
-                <span>المتبقي من الفاتورة الجديدة:</span>
-                <span>${this.formatMoney(remaining)} ج.م</span>
-              </div>
-            `}
-            <div style="display: flex; justify-content: space-between; color: #b91c1c; font-weight: 900; font-size: 1.1rem; background: #fef2f2; padding: 6px 10px; border-radius: 6px; border: 1px solid #fee2e2;">
-              <span>إجمالي الرصيد المتبقي المستحق على العميل:</span>
-              <span>${this.formatMoney(inv.finalDebt !== undefined ? inv.finalDebt : (prevDebt + remaining - (Number(inv.paidFromOldDebt) || 0)))} ج.م</span>
-            </div>
-          </div>
-
-          <!-- Footer (Matches Image 2) -->
-          <div style="text-align: center; border-top: 1px dashed #cbd5e1; padding-top: 12px; margin-top: 10px; color: #64748b; font-size: 0.8rem;">
-            <div>شكراً لتعاملكم معنا! البضاعة المباعة لا تُرد بعد الاستلام.</div>
-            <div style="margin-top: 4px; font-weight: 700; color: #334155;">البائع: ${seller}</div>
-          </div>
-        </div>
+      <div class="modal-body receipt-modal-body" style="background: #f8fafc; padding: 16px;">
+        ${receiptHtml}
       </div>
       <div class="modal-footer" style="justify-content: space-between; flex-wrap: wrap; gap: 8px;">
         <div style="display: flex; gap: 8px; flex-wrap: wrap;">
