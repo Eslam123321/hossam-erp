@@ -98,6 +98,7 @@ const App = {
         this.sanitizeRepsData();
         this.sanitizeUsersList();
         this.reconcilePastRepInvoicesStock();
+        this.reconcileCustomerBalances();
         this.reconcileRepsStats();
         this.syncDB();
         this.requestUIRefresh();
@@ -128,6 +129,7 @@ const App = {
     this.sanitizeRepsData();
     this.sanitizeUsersList();
     this.reconcilePastRepInvoicesStock();
+    this.reconcileCustomerBalances();
     this.reconcileRepsStats();
     this.bindEvents();
     this.setupClock();
@@ -304,18 +306,22 @@ const App = {
       const totalPurchasesFromInvoices = custInvoices.reduce((sum, i) => sum + (Number(i.grandTotal || i.total) || 0), 0);
       const totalPaidFromInvoices = custInvoices.reduce((sum, i) => sum + (Number(i.paidAmount) || 0), 0);
       const totalPaidFromReceipts = custReceipts.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
+      const netFromTx = totalPurchasesFromInvoices - (totalPaidFromInvoices + totalPaidFromReceipts);
 
-      if (custInvoices.length > 0 || custReceipts.length > 0) {
-        cust.totalPurchases = totalPurchasesFromInvoices;
-        cust.totalPaid = totalPaidFromInvoices + totalPaidFromReceipts;
-
-        // If total purchases equal total paid, customer debt is strictly 0!
-        if (cust.totalPurchases <= cust.totalPaid) {
-          cust.currentDebt = 0;
+      // Preserve or initialize openingDebt seamlessly without modifying Firebase structure
+      if (cust.openingDebt === undefined || cust.openingDebt === null) {
+        const knownDebt = typeof cust.currentDebt === 'number' ? cust.currentDebt : (Number(cust.currentDebt) || 0);
+        if (knownDebt !== netFromTx && (knownDebt > 0 || (custInvoices.length === 0 && custReceipts.length === 0))) {
+          cust.openingDebt = knownDebt - netFromTx;
         } else {
-          cust.currentDebt = Math.max(0, cust.totalPurchases - cust.totalPaid);
+          cust.openingDebt = 0;
         }
       }
+
+      const openingDebt = Number(cust.openingDebt) || 0;
+      cust.totalPurchases = Math.max(0, openingDebt + totalPurchasesFromInvoices);
+      cust.totalPaid = totalPaidFromInvoices + totalPaidFromReceipts;
+      cust.currentDebt = Math.max(0, (openingDebt + totalPurchasesFromInvoices) - cust.totalPaid);
     });
   },
 
@@ -1999,15 +2005,24 @@ const App = {
       const customer = (this.db.customers || []).find(c => c.id === this.currentCart.customerId);
       if (customer) {
         const prevDebt = Number(customer.currentDebt) || 0;
-        const newDebt = prevDebt + remaining;
+        let extraPaid = 0;
+        if (paid > grandTotal && prevDebt > 0) {
+          extraPaid = Math.min(prevDebt, paid - grandTotal);
+        }
+        const newDebt = Math.max(0, prevDebt + remaining - extraPaid);
         if (prevDebtRow && prevDebtVal) {
           prevDebtRow.style.display = 'flex';
           prevDebtVal.textContent = this.formatMoney(prevDebt) + ' ج.م';
         }
         if (newDebtRow && newDebtVal) {
           newDebtRow.style.display = 'flex';
-          newDebtVal.textContent = this.formatMoney(newDebt) + ' ج.م';
-          newDebtVal.style.color = newDebt > 0 ? 'var(--rose)' : 'var(--emerald)';
+          if (newDebt === 0 && prevDebt > 0 && paid >= grandTotal + prevDebt) {
+            newDebtVal.textContent = '0 ج.م (مسدد بالكامل ✓)';
+            newDebtVal.style.color = 'var(--emerald)';
+          } else {
+            newDebtVal.textContent = this.formatMoney(newDebt) + ' ج.م';
+            newDebtVal.style.color = newDebt > 0 ? 'var(--rose)' : 'var(--emerald)';
+          }
         }
       } else {
         if (prevDebtRow) prevDebtRow.style.display = 'none';
@@ -2622,7 +2637,11 @@ const App = {
     drawRow('المديونية السابقة للعميل:', `${this.formatMoney(prevDebt)} ج.م`, '#dc2626', true, '#dc2626');
     drawRow('إجمالي الدين القديم + الجديد:', `${this.formatMoney(prevDebt + grandTotal)} ج.م`, '#7c3aed', true, '#7c3aed');
     drawRow('المبلغ المدفوع كاش الآن:', `${this.formatMoney(paid)} ج.م`, '#16a34a', true, '#475569');
-    drawRow('المتبقي من الفاتورة الجديدة:', `${this.formatMoney(remaining)} ج.م`, '#dc2626', true, '#dc2626');
+    if (paidFromOldDebt > 0) {
+      drawRow('سداد من الدين القديم:', `${this.formatMoney(paidFromOldDebt)} ج.م`, '#059669', true, '#059669');
+    } else {
+      drawRow('المتبقي من الفاتورة الجديدة:', `${this.formatMoney(remaining)} ج.م`, '#dc2626', true, '#dc2626');
+    }
 
     // Final total debt due box (Soft red highlight box)
     ctx.fillStyle = '#fef2f2';
@@ -4880,6 +4899,7 @@ const App = {
       area,
       assignedRepId: null,
       assignedRepName: 'الإدارة المركزية',
+      openingDebt: debt,
       totalPurchases: debt,
       totalPaid: 0,
       currentDebt: debt,
@@ -5170,13 +5190,41 @@ const App = {
     customer.name = document.getElementById('edit-cust-name').value.trim();
     customer.phone = this.convertArabicNumbers(document.getElementById('edit-cust-phone').value).trim();
     customer.area = document.getElementById('edit-cust-area').value.trim();
-    customer.currentDebt = this.parseNumber(document.getElementById('edit-cust-debt').value, 0);
+
+    const newDebt = this.parseNumber(document.getElementById('edit-cust-debt').value, 0);
+
+    const invoices = (this.db.invoices || []).filter(i => i.customerId === customer.id || i.customerName === customer.name);
+    const treasuryLogs = (this.db.treasuryLogs || []).filter(t => 
+      (t.customerId === customer.id || (t.sourceName && t.sourceName.includes(customer.name))) &&
+      (t.type && (t.type.includes('سند قبض') || t.type.includes('تحصيل')))
+    );
+
+    const invPurchases = invoices.reduce((sum, i) => sum + (Number(i.grandTotal || i.total) || 0), 0);
+    const invPaid = invoices.reduce((sum, i) => sum + (Number(i.paidAmount) || 0), 0);
+    const recPaid = treasuryLogs.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
+    const netTransactions = invPurchases - (invPaid + recPaid);
+
+    customer.openingDebt = newDebt - netTransactions;
+    customer.currentDebt = Math.max(0, newDebt);
+    customer.totalPurchases = Math.max(0, customer.openingDebt + invPurchases);
+    customer.totalPaid = invPaid + recPaid;
+
+    // Also update assigned debts for rep if customer is assigned to a rep
+    if (customer.assignedRepId) {
+      const rep = (this.db.reps || []).find(r => r.id === customer.assignedRepId);
+      if (rep) {
+        this.reconcileRepsStats();
+        if (window.FDB) window.FDB.updateDocument('reps', rep.id, rep);
+      }
+    }
 
     this.syncDB();
     if (window.FDB) window.FDB.updateDocument('customers', custId, customer);
     this.closeModal();
     this.showToast(`تم تحديث بيانات العميل ${customer.name}`);
+    this.reconcileAllStats();
     this.renderCustomers();
+    this.updateDashboardStats();
   },
 
   async deleteCustomer(custId) {
