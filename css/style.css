@@ -2166,6 +2166,10 @@ body {
     order: 1;
     width: 100%;
   }
+  .products-grid {
+    max-height: none !important;
+    overflow-y: visible !important;
+  }
   .dashboard-grid-sections {
     grid-template-columns: 1fr;
   }

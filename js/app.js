@@ -172,11 +172,36 @@ const App = {
 
   _uiRefreshTimer: null,
   requestUIRefresh() {
-    if (this._uiRefreshTimer) cancelAnimationFrame(this._uiRefreshTimer);
-    this._uiRefreshTimer = requestAnimationFrame(() => {
+    if (this._uiRefreshTimer) clearTimeout(this._uiRefreshTimer);
+    this._uiRefreshTimer = setTimeout(() => {
       this.updateLiveSidebarStats();
+
+      // Check if user is currently typing in an input
+      const activeEl = document.activeElement;
+      const isTyping = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'SELECT');
+      if (isTyping && ['pos', 'inventory', 'customers'].includes(this.activePage)) {
+        return;
+      }
+
+      // Check if any modal is currently open
+      const isModalOpen = document.getElementById('global-modal-overlay')?.classList.contains('show') ||
+                          document.getElementById('custom-confirm-overlay')?.classList.contains('show');
+      if (isModalOpen) return;
+
+      // Preserve current scroll position across live Firestore renders
+      const currentScrollY = window.scrollY || document.documentElement.scrollTop || 0;
+
       this.renderCurrentActiveView();
-    });
+
+      if (currentScrollY > 0) {
+        requestAnimationFrame(() => {
+          const newScrollY = window.scrollY || document.documentElement.scrollTop || 0;
+          if (Math.abs(newScrollY - currentScrollY) > 5) {
+            window.scrollTo({ top: currentScrollY, behavior: 'instant' });
+          }
+        });
+      }
+    }, 120);
   },
 
   renderCurrentActiveView() {
@@ -1130,6 +1155,44 @@ const App = {
         target.dispatchEvent(new Event('change', { bubbles: true }));
       }
     }, true);
+
+    // 5. تحديد تلقائي للأرقام بالكامل عند اللمس أو التركيز على أي حقل رقمي أو مبالغ أو كميات
+    const autoSelectNumericInput = (el) => {
+      if (!el || el.tagName !== 'INPUT') return;
+      if (['button', 'submit', 'checkbox', 'radio', 'file', 'password'].includes(el.type)) return;
+      const isNumeric = el.type === 'number' ||
+                        el.getAttribute('inputmode') === 'numeric' ||
+                        el.getAttribute('inputmode') === 'decimal' ||
+                        el.classList.contains('cart-input-mini') ||
+                        el.id?.startsWith('cart-') ||
+                        el.id?.includes('qty') ||
+                        el.id?.includes('price') ||
+                        el.id?.includes('amount') ||
+                        el.id?.includes('discount') ||
+                        el.id?.includes('paid') ||
+                        el.id?.includes('debt') ||
+                        el.id?.includes('cost');
+      if (isNumeric) {
+        setTimeout(() => {
+          try {
+            if (typeof el.select === 'function') el.select();
+            if (typeof el.setSelectionRange === 'function' && el.type !== 'number') {
+              el.setSelectionRange(0, el.value.length);
+            }
+          } catch (err) {}
+        }, 35);
+      }
+    };
+
+    document.addEventListener('focus', (e) => {
+      autoSelectNumericInput(e.target);
+    }, true);
+
+    document.addEventListener('click', (e) => {
+      if (e.target && e.target.tagName === 'INPUT') {
+        autoSelectNumericInput(e.target);
+      }
+    }, true);
   },
 
   toggleSidebar(open) {
@@ -1151,6 +1214,13 @@ const App = {
       if (this.activePage !== fallback) {
         this.navigateTo(fallback);
       }
+      return;
+    }
+
+    const isSamePage = this.activePage === pageId;
+    if (isSamePage) {
+      // المستخدم بالفعل في هذه الصفحة، لا داعي للقفز لأعلى الصفحة أو إعادة الرسم المزعج
+      this.toggleSidebar(false);
       return;
     }
 
@@ -1186,8 +1256,8 @@ const App = {
     // Close mobile sidebar and overlay
     this.toggleSidebar(false);
 
-    // Scroll to top smoothly
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    // الانتقال لأعلى الصفحة فقط عند التبديل لصفحة جديدة
+    window.scrollTo({ top: 0, behavior: 'instant' });
 
     // Render corresponding page logic
     this.renderCurrentPage();
@@ -1520,10 +1590,19 @@ const App = {
     const grid = document.getElementById('pos-products-grid');
     if (!grid) return;
 
+    const savedScroll = window.scrollY || document.documentElement.scrollTop || 0;
     const searchVal = (document.getElementById('pos-search-input')?.value || '').toLowerCase();
+    const isRepUser = this.isCurrentUserRep();
+    const activeRep = this.activeRepForPOS || (isRepUser ? this.getLinkedRep() : null);
     
     // Filter items by search and category (محلي, أجنبي, مستورد)
     let filtered = this.db.items.filter(item => {
+      // في حساب المندوب: إظهار الأصناف المخصصة لعهدته فقط دون غيرها
+      if (activeRep) {
+        const custodyItem = activeRep.activeCustody?.find(c => c.itemId === item.id || String(c.itemId) === String(item.id) || c.itemName === item.name);
+        if (!custodyItem) return false;
+      }
+
       const matchSearch = item.name.toLowerCase().includes(searchVal) || (item.barcode && item.barcode.includes(searchVal));
       let matchCat = true;
       if (this.selectedCategory && this.selectedCategory !== 'all') {
@@ -1534,13 +1613,12 @@ const App = {
 
     // If POS is in Rep dedicated mode
     let repNoticeHtml = '';
-    if (this.activeRepForPOS) {
-      const isRepUser = this.isCurrentUserRep();
+    if (activeRep) {
       repNoticeHtml = `
         <div style="grid-column: 1 / -1; background: rgba(59, 130, 246, 0.15); border: 1px solid var(--blue); padding: 12px 18px; border-radius: var(--radius-md); display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
           <div>
-            <strong>⚡ نقطة بيع المندوب: ${this.activeRepForPOS.name}</strong> 
-            <span style="font-size: 0.85rem; color: var(--text-secondary); margin-right: 8px;">(الخصم يتم من عهدة المندوب مباشرة)</span>
+            <strong>⚡ نقطة بيع المندوب: ${activeRep.name}</strong> 
+            <span style="font-size: 0.85rem; color: var(--text-secondary); margin-right: 8px;">(الأصناف المعروضة هي المخصصة لعهدتك فقط والخصم يتم منها مباشرة)</span>
           </div>
           ${!isRepUser ? `<button class="btn btn-secondary btn-sm" onclick="App.exitRepPOS()">العودة لنقطة البيع الرئيسية</button>` : ''}
         </div>
@@ -1548,7 +1626,10 @@ const App = {
     }
 
     if (filtered.length === 0) {
-      grid.innerHTML = repNoticeHtml + `<div style="grid-column: 1 / -1; text-align: center; padding: 40px; color: var(--text-muted);">لا توجد أصناف مطابقة لبحثك</div>`;
+      const emptyMsg = (activeRep && (!activeRep.activeCustody || activeRep.activeCustody.length === 0))
+        ? 'لا توجد أصناف مخصصة في عهدتك حالياً، يقوم مدير النظام بتخصيص الأصناف والكميات لعهدتك من لوحة التحكم'
+        : 'لا توجد أصناف مطابقة لبحثك';
+      grid.innerHTML = repNoticeHtml + `<div style="grid-column: 1 / -1; text-align: center; padding: 40px; color: var(--text-muted); font-size: 0.95rem;">${emptyMsg}</div>`;
       return;
     }
 
@@ -1556,8 +1637,8 @@ const App = {
       let stockAvailable = item.cartonsInStock;
       
       // If selling from rep custody
-      if (this.activeRepForPOS) {
-        const repCustodyItem = this.activeRepForPOS.activeCustody?.find(c => c.itemId === item.id);
+      if (activeRep) {
+        const repCustodyItem = activeRep.activeCustody?.find(c => c.itemId === item.id || String(c.itemId) === String(item.id) || c.itemName === item.name);
         stockAvailable = repCustodyItem ? repCustodyItem.cartons : 0;
       }
 
@@ -1597,6 +1678,16 @@ const App = {
         </div>
       `;
     }).join('');
+
+    // الحفاظ على موضع التمرير ومنع القفز لأعلى الصفحة
+    if (savedScroll > 0) {
+      requestAnimationFrame(() => {
+        const current = window.scrollY || document.documentElement.scrollTop || 0;
+        if (Math.abs(current - savedScroll) > 10) {
+          window.scrollTo({ top: savedScroll, behavior: 'instant' });
+        }
+      });
+    }
   },
 
   setPOSCategory(cat, el) {
@@ -1899,6 +1990,7 @@ const App = {
                 <span style="font-size: 0.76rem; color: var(--text-secondary);">السعر:</span>
                 <input type="text" inputmode="decimal" id="cart-price-${it.id}" value="${it.price}" 
                        oninput="App.updateCartItemPrice('${it.id}', this.value)" 
+                       onfocus="this.select()" onclick="this.select()"
                        style="width: 76px; height: 26px; padding: 2px 6px; font-size: 0.85rem; font-weight: 800; background: rgba(15, 23, 42, 0.9); border: 1px solid var(--border-subtle); color: var(--emerald-neon); border-radius: 4px; text-align: center;" 
                        title="اكتب سعر البيع يدوياً">
                 <span style="font-size: 0.72rem; color: var(--text-muted);">ج.م</span>
@@ -1907,6 +1999,7 @@ const App = {
                 <span style="font-size: 0.75rem; color: var(--gold); font-weight: 600;">خصم الصنف:</span>
                 <input type="text" inputmode="decimal" id="cart-disc-${it.id}" value="${it.discount || 0}" 
                        oninput="App.updateCartItemDiscount('${it.id}', this.value)" 
+                       onfocus="this.select()" onclick="this.select()"
                        style="width: 70px; height: 26px; padding: 2px 6px; font-size: 0.8rem; background: rgba(15, 23, 42, 0.8); border: 1px solid ${it.discount > 0 ? 'var(--gold)' : 'var(--border-subtle)'}; color: ${it.discount > 0 ? 'var(--gold)' : 'var(--text-white)'}; border-radius: 4px; text-align: center;" 
                        placeholder="0" title="خصم بالجنيه على هذا الصنف">
                 <span style="font-size: 0.72rem; color: var(--text-muted);">ج.م</span>
@@ -1917,6 +2010,7 @@ const App = {
                 <button type="button" class="cart-qty-btn" onclick="App.updateCartQty('${it.id}', -1)">-</button>
                 <input type="text" inputmode="numeric" id="cart-qty-${it.id}" value="${it.qty}" 
                        oninput="App.updateCartItemQtyInput('${it.id}', this.value)" 
+                       onfocus="this.select()" onclick="this.select()"
                        style="width: 44px; height: 28px; padding: 2px; font-size: 0.9rem; font-weight: 800; background: rgba(15, 23, 42, 0.9); border: 1px solid var(--border-subtle); color: var(--text-white); border-radius: 4px; text-align: center;" 
                        title="اكتب الكمية يدوياً">
                 <button type="button" class="cart-qty-btn" onclick="App.updateCartQty('${it.id}', 1)">+</button>
@@ -3306,6 +3400,10 @@ const App = {
 
   // Modal: تحصيل وتوريد فوري لنقدية المندوب
   openRepSupplyCashModal(repId) {
+    if (this.isCurrentUserRep()) {
+      this.openRepSuppliesModal(repId);
+      return;
+    }
     const rep = this.db.reps.find(r => r.id === repId);
     if (!rep) return;
 
@@ -3327,7 +3425,7 @@ const App = {
 
         <div class="form-group" style="margin-bottom: 14px;">
           <label class="form-label" style="font-weight: 700; font-size: 0.95rem;">المبلغ المطلوب توريده وإيداعه بالخزينة (ج.م) *</label>
-          <input type="number" id="rep-supply-amount" class="form-control" value="${currentCash}" max="${currentCash}" style="font-size: 1.25rem; font-weight: 800; font-family: 'JetBrains Mono', monospace; text-align: center; color: #38bdf8;">
+          <input type="number" id="rep-supply-amount" class="form-control" value="${currentCash}" max="${currentCash}" onfocus="this.select()" style="font-size: 1.25rem; font-weight: 800; font-family: 'JetBrains Mono', monospace; text-align: center; color: #38bdf8;">
         </div>
 
         <div class="form-group" style="margin-bottom: 16px;">
@@ -3356,8 +3454,28 @@ const App = {
     const rep = this.db.reps.find(r => r.id === repId);
     if (!rep) return;
 
+    const isRep = this.isCurrentUserRep();
     // Filter supplies for this rep
     const supplies = this.db.treasuryLogs.filter(log => log.sourceName.includes(rep.name));
+
+    const supplyActionHtml = isRep ? '' : `
+        <div style="border-top: 1px solid var(--border-color); padding-top: 14px; margin-bottom: 14px;">
+          <h4 style="margin-bottom: 10px;">تسجيل توريد جديد للخزينة الرئيسية:</h4>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">المبلغ المورّد (ج.م)</label>
+              <input type="number" id="rep-supply-amount" class="form-control" value="${rep.currentCash}" max="${rep.currentCash}" onfocus="this.select()">
+            </div>
+            <div class="form-group">
+              <label class="form-label">ملاحظات التوريد</label>
+              <input type="text" id="rep-supply-notes" class="form-control" placeholder="توريد تحصيلات خط التوزيع">
+            </div>
+          </div>
+          <button class="btn btn-success" style="margin-top: 10px; width: 100%;" onclick="App.saveRepSupply('${rep.id}')">
+            ✓ تأكيد استلام النقدية وإيداعها بالخزينة
+          </button>
+        </div>
+    `;
 
     const modalHtml = `
       <div class="modal-header">
@@ -3376,22 +3494,7 @@ const App = {
           </div>
         </div>
 
-        <div style="border-top: 1px solid var(--border-color); padding-top: 14px; margin-bottom: 14px;">
-          <h4 style="margin-bottom: 10px;">تسجيل توريد جديد للخزينة الرئيسية:</h4>
-          <div class="form-row">
-            <div class="form-group">
-              <label class="form-label">المبلغ المورّد (ج.م)</label>
-              <input type="number" id="rep-supply-amount" class="form-control" value="${rep.currentCash}" max="${rep.currentCash}">
-            </div>
-            <div class="form-group">
-              <label class="form-label">ملاحظات التوريد</label>
-              <input type="text" id="rep-supply-notes" class="form-control" placeholder="توريد تحصيلات خط التوزيع">
-            </div>
-          </div>
-          <button class="btn btn-success" style="margin-top: 10px; width: 100%;" onclick="App.saveRepSupply('${rep.id}')">
-            ✓ تأكيد استلام النقدية وإيداعها بالخزينة
-          </button>
-        </div>
+        ${supplyActionHtml}
 
         <h4>سجل عمليات التوريد السابقة:</h4>
         <div style="max-height: 200px; overflow-y: auto;">
@@ -3427,6 +3530,10 @@ const App = {
   },
 
   async saveRepSupply(repId) {
+    if (this.isCurrentUserRep()) {
+      this.showToast('عفواً، تسجيل توريد النقدية وإيداعها يتم حصراً من قبل إدارة النظام', 'error');
+      return;
+    }
     const rep = this.db.reps.find(r => r.id === repId);
     if (!rep) return;
 
@@ -4145,6 +4252,7 @@ const App = {
   // 3. INVENTORY & PRICE ADJUSTMENTS
   // ==========================================
   renderInventory() {
+    const savedScroll = window.scrollY || document.documentElement.scrollTop || 0;
     const searchVal = (document.getElementById('inventory-search-input')?.value || '').toLowerCase();
     const filterCat = document.getElementById('inventory-filter-category')?.value || 'all';
     const filterStatus = document.getElementById('inventory-filter-status')?.value || 'all';
@@ -4218,6 +4326,16 @@ const App = {
         </tr>
       `;
     }).join('');
+
+    // الحفاظ على موضع التمرير ومنع القفز لأعلى الصفحة
+    if (savedScroll > 0) {
+      requestAnimationFrame(() => {
+        const current = window.scrollY || document.documentElement.scrollTop || 0;
+        if (Math.abs(current - savedScroll) > 10) {
+          window.scrollTo({ top: savedScroll, behavior: 'instant' });
+        }
+      });
+    }
   },
 
   // Modal: إضافة صنف جديد
@@ -4751,6 +4869,7 @@ const App = {
   // 4. CUSTOMER ACCOUNTS & DEBTS
   // ==========================================
   renderCustomers() {
+    const savedScroll = window.scrollY || document.documentElement.scrollTop || 0;
     const searchVal = (document.getElementById('customer-search-input')?.value || '').toLowerCase();
     const grid = document.getElementById('customers-grid');
     if (!grid) return;
@@ -4767,6 +4886,18 @@ const App = {
     let filtered = baseCustomers.filter(c => {
       return c.name.toLowerCase().includes(searchVal) || (c.phone && c.phone.includes(searchVal)) || (c.area && c.area.toLowerCase().includes(searchVal));
     });
+
+    // تحديث عداد العملاء بدقة: عدد العملاء للأدمن وعدد العملاء المخصصين للمندوب
+    const countLabel = document.getElementById('customers-count-label');
+    const countVal = document.getElementById('customers-count-val');
+    if (countLabel && countVal) {
+      if (isRep) {
+        countLabel.textContent = 'عدد العملاء المخصصين :';
+      } else {
+        countLabel.textContent = 'عدد العملاء:';
+      }
+      countVal.textContent = filtered.length;
+    }
 
     if (filtered.length === 0) {
       if (isRep && (!currentRep || !Array.isArray(currentRep.assignedCustomerIds) || currentRep.assignedCustomerIds.length === 0)) {
@@ -4838,6 +4969,16 @@ const App = {
         </div>
       `;
     }).join('');
+
+    // الحفاظ على موضع التمرير ومنع القفز لأعلى الصفحة
+    if (savedScroll > 0) {
+      requestAnimationFrame(() => {
+        const current = window.scrollY || document.documentElement.scrollTop || 0;
+        if (Math.abs(current - savedScroll) > 10) {
+          window.scrollTo({ top: savedScroll, behavior: 'instant' });
+        }
+      });
+    }
   },
 
   // Modal: إضافة عميل
