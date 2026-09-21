@@ -5183,6 +5183,8 @@ const App = {
     const customer = this.db.customers.find(c => c.id === custId);
     if (!customer) return;
 
+    const isRep = this.isCurrentUserRep();
+
     // Customer Invoices
     const invoices = this.db.invoices.filter(i => i.customerId === customer.id);
     // Customer Receipts
