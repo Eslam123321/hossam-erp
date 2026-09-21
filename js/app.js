@@ -5234,8 +5234,10 @@ const App = {
                     <td class="table-actions-cell">
                       <div class="table-actions-row">
                         <button class="btn btn-secondary btn-sm" onclick="App.viewInvoiceModal('${inv.id}')" title="معاينة الفاتورة">معاينة</button>
-                        <button class="btn btn-primary btn-sm" onclick="App.openEditInvoiceModal('${inv.id}')" title="تعديل الفاتورة">✏️ تعديل</button>
-                        <button class="btn btn-danger btn-sm" onclick="App.deleteInvoice('${inv.id}')" title="حذف الفاتورة">🗑️ حذف</button>
+                        ${!isRep ? `
+                          <button class="btn btn-primary btn-sm" onclick="App.openEditInvoiceModal('${inv.id}')" title="تعديل الفاتورة">✏️ تعديل</button>
+                          <button class="btn btn-danger btn-sm" onclick="App.deleteInvoice('${inv.id}')" title="حذف الفاتورة">🗑️ حذف</button>
+                        ` : ''}
                       </div>
                     </td>
                   </tr>
@@ -5269,8 +5271,10 @@ const App = {
                       <div style="display: flex; gap: 4px; flex-wrap: wrap;">
                         <button class="btn btn-secondary btn-sm" style="padding: 2px 6px; font-size: 0.72rem;" onclick="App.viewReceiptModal('${r.id}')" title="معاينة السند">معاينة</button>
                         <button class="btn btn-success btn-sm" style="padding: 2px 6px; font-size: 0.72rem; background: #25D366; border-color: #25D366; color: #fff;" onclick="App.shareReceiptWhatsApp('${r.id}')" title="إرسال صورة السند عبر واتساب">💬 واتساب</button>
-                        <button class="btn btn-primary btn-sm" style="padding: 2px 6px; font-size: 0.72rem;" onclick="App.openEditReceiptModal('${r.id}')" title="تعديل السند">✏️ تعديل</button>
-                        <button class="btn btn-danger btn-sm" style="padding: 2px 6px; font-size: 0.72rem;" onclick="App.deleteReceipt('${r.id}')" title="حذف السند">🗑️ حذف</button>
+                        ${!isRep ? `
+                          <button class="btn btn-primary btn-sm" style="padding: 2px 6px; font-size: 0.72rem;" onclick="App.openEditReceiptModal('${r.id}')" title="تعديل السند">✏️ تعديل</button>
+                          <button class="btn btn-danger btn-sm" style="padding: 2px 6px; font-size: 0.72rem;" onclick="App.deleteReceipt('${r.id}')" title="حذف السند">🗑️ حذف</button>
+                        ` : ''}
                       </div>
                     </td>
                   </tr>
@@ -5659,6 +5663,7 @@ const App = {
       seller
     }, 'view-invoice-capture');
 
+    const isRep = this.isCurrentUserRep();
     const modalHtml = `
       <div class="modal-header">
         <h3>🧾 تفاصيل الفاتورة #${inv.id}</h3>
@@ -5669,12 +5674,14 @@ const App = {
       </div>
       <div class="modal-footer" style="justify-content: space-between; flex-wrap: wrap; gap: 8px;">
         <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-          <button class="btn btn-primary" onclick="App.openEditInvoiceModal('${inv.id}')">
-            <span>✏️</span> تعديل الفاتورة
-          </button>
-          <button class="btn btn-danger" onclick="App.deleteInvoice('${inv.id}')">
-            <span>🗑️</span> حذف الفاتورة
-          </button>
+          ${!isRep ? `
+            <button class="btn btn-primary" onclick="App.openEditInvoiceModal('${inv.id}')">
+              <span>✏️</span> تعديل الفاتورة
+            </button>
+            <button class="btn btn-danger" onclick="App.deleteInvoice('${inv.id}')">
+              <span>🗑️</span> حذف الفاتورة
+            </button>
+          ` : ''}
           <button class="btn" onclick="App.shareSavedInvoiceWhatsApp('${inv.id}')" style="background-color: #25D366; color: #ffffff; border: none; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 2px 8px rgba(37,211,102,0.3); padding: 8px 14px; border-radius: 6px; cursor: pointer;">
             ${this.getWhatsAppIconSvg(18)}
             <span>إرسال صورة الفاتورة عبر واتساب</span>
@@ -5694,6 +5701,10 @@ const App = {
   // INVOICE EDITING & DELETION
   // ==========================================
   openEditInvoiceModal(invoiceId) {
+    if (this.isCurrentUserRep()) {
+      this.showToast('عفواً، تعديل الفواتير متاح حصراً لحساب الإدارة الرئيسية', 'error');
+      return;
+    }
     const inv = this.db.invoices.find(i => i.id === invoiceId);
     if (!inv) {
       this.showToast('لم يتم العثور على الفاتورة', 'error');
@@ -6163,6 +6174,10 @@ const App = {
   },
 
   async deleteInvoice(invoiceId) {
+    if (this.isCurrentUserRep()) {
+      this.showToast('عفواً، حذف الفواتير متاح حصراً لحساب الإدارة الرئيسية', 'error');
+      return;
+    }
     if (!invoiceId) return;
     const cleanId = String(invoiceId).trim().replace(/^#/, '');
     const inv = (this.db.invoices || []).find(i => 
@@ -6446,6 +6461,7 @@ const App = {
 
     const arabicWords = this.numberToArabicWords(log.amount);
     const debtInfo = this.getReceiptDebtInfo(log);
+    const isRep = this.isCurrentUserRep();
 
     const modalHtml = `
       <div class="modal-header">
@@ -6559,12 +6575,14 @@ const App = {
           <button class="btn btn-secondary" onclick="App.printReceiptVoucher('${log.id}')">
             <span>🖨️</span> طباعة
           </button>
-          <button class="btn btn-primary" onclick="App.openEditReceiptModal('${log.id}')">
-            <span>✏️</span> تعديل السند
-          </button>
-          <button class="btn btn-danger" onclick="App.deleteReceipt('${log.id}')">
-            <span>🗑️</span> حذف السند
-          </button>
+          ${!isRep ? `
+            <button class="btn btn-primary" onclick="App.openEditReceiptModal('${log.id}')">
+              <span>✏️</span> تعديل السند
+            </button>
+            <button class="btn btn-danger" onclick="App.deleteReceipt('${log.id}')">
+              <span>🗑️</span> حذف السند
+            </button>
+          ` : ''}
         </div>
         <button class="btn btn-secondary" onclick="App.closeModal()">إغلاق</button>
       </div>
@@ -6574,6 +6592,10 @@ const App = {
   },
 
   openEditReceiptModal(receiptId) {
+    if (this.isCurrentUserRep()) {
+      this.showToast('عفواً، تعديل سندات القبض متاح حصراً لحساب الإدارة الرئيسية', 'error');
+      return;
+    }
     const log = (this.db.treasuryLogs || []).find(l => l.id === receiptId);
     if (!log) {
       this.showToast('لم يتم العثور على سند القبض', 'error');
@@ -6693,6 +6715,10 @@ const App = {
   },
 
   async deleteReceipt(receiptId) {
+    if (this.isCurrentUserRep()) {
+      this.showToast('عفواً، حذف سندات القبض متاح حصراً لحساب الإدارة الرئيسية', 'error');
+      return;
+    }
     const log = (this.db.treasuryLogs || []).find(l => l.id === receiptId);
     if (!log) return;
 
