@@ -71,11 +71,11 @@ const App = {
             if (colName === 'items') { this.db.items = docs; updated = true; }
             else if (colName === 'customers') { this.db.customers = docs; updated = true; }
             else if (colName === 'invoices') {
-              this.db.invoices = docs.sort((a, b) => new Date(b.date || b.localTimestamp || 0) - new Date(a.date || a.localTimestamp || 0));
+              this.db.invoices = docs.sort((a, b) => this.getRecordTimestamp(b) - this.getRecordTimestamp(a));
               updated = true;
             }
             else if (colName === 'treasury') {
-              this.db.treasuryLogs = docs.sort((a, b) => new Date(b.date || b.localTimestamp || 0) - new Date(a.date || a.localTimestamp || 0));
+              this.db.treasuryLogs = docs.sort((a, b) => this.getRecordTimestamp(b) - this.getRecordTimestamp(a));
               updated = true;
             }
             else if (colName === 'reps') { this.db.reps = docs; updated = true; }
@@ -395,7 +395,7 @@ const App = {
         const incomingIds = new Set(invoices.map(i => String(i.id)));
         const pendingLocal = (this.db.invoices || []).filter(li => !incomingIds.has(String(li.id)));
         const allInvoices = [...invoices, ...pendingLocal];
-        this.db.invoices = allInvoices.sort((a, b) => new Date(b.date || b.localTimestamp || 0) - new Date(a.date || a.localTimestamp || 0));
+        this.db.invoices = allInvoices.sort((a, b) => this.getRecordTimestamp(b) - this.getRecordTimestamp(a));
         this.reconcilePastRepInvoicesStock();
         this.reconcileCustomerBalances();
         this.syncDB();
@@ -409,7 +409,7 @@ const App = {
     // 4. Treasury Logs Realtime Sync
     const u4 = window.FDB.initRealtimeSync('treasury', (logs) => {
       if (logs && Array.isArray(logs)) {
-        this.db.treasuryLogs = logs.sort((a, b) => new Date(b.date || b.localTimestamp || 0) - new Date(a.date || a.localTimestamp || 0));
+        this.db.treasuryLogs = logs.sort((a, b) => this.getRecordTimestamp(b) - this.getRecordTimestamp(a));
         this.syncDB();
         this.showCloudSyncOverlay(false);
         this.updateCloudStatus('online', 'سحابي متصل');
@@ -477,50 +477,83 @@ const App = {
   },
 
   // Safe Date Parsing and Filtering Helper
-  parseRecordDate(record) {
-    if (!record) return null;
-    // 1. Try ISO localTimestamp
-    if (record.localTimestamp) {
-      const d = new Date(record.localTimestamp);
-      if (!isNaN(d.getTime())) return d;
-    }
-    // 2. Try Firestore createdAt
+  getRecordTimestamp(record) {
+    if (!record) return 0;
+    // 1. Try Firestore createdAt timestamp
     if (record.createdAt) {
       if (typeof record.createdAt.toDate === 'function') {
         const d = record.createdAt.toDate();
-        if (!isNaN(d.getTime())) return d;
+        if (!isNaN(d.getTime())) return d.getTime();
       }
       if (record.createdAt.seconds) {
-        return new Date(record.createdAt.seconds * 1000);
+        return (record.createdAt.seconds * 1000) + (record.createdAt.nanoseconds ? Math.floor(record.createdAt.nanoseconds / 1000000) : 0);
       }
       const d = new Date(record.createdAt);
-      if (!isNaN(d.getTime())) return d;
+      if (!isNaN(d.getTime())) return d.getTime();
     }
-    // 3. Try parsing string date
-    if (record.date && typeof record.date === 'string') {
-      const d = new Date(record.date);
-      if (!isNaN(d.getTime())) return d;
+    // 2. Try ISO localTimestamp
+    if (record.localTimestamp) {
+      const d = new Date(record.localTimestamp);
+      if (!isNaN(d.getTime())) return d.getTime();
+    }
+    // 3. Try raw timestamp number
+    if (typeof record.timestamp === 'number' && !isNaN(record.timestamp)) {
+      return record.timestamp;
+    }
+    // 4. Try dateTime or date string (supporting Arabic locale strings with ص/م and HH:MM:SS)
+    const strDate = record.dateTime || record.date;
+    if (strDate && typeof strDate === 'string') {
+      const clean = strDate.replace(/[\u200E\u200F\u061C.]/g, '').trim();
 
-      // Clean invisible characters, Arabic indicators, and leading dots
-      const cleanStr = record.date.replace(/[\u200E\u200F\u061C.]/g, '').trim();
-      // Look for YYYY/M/D or YYYY-M-D
-      const ymd = cleanStr.match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+      // Extract time: HH:MM:SS or HH:MM
+      let hours = 0, minutes = 0, seconds = 0;
+      const timeMatch = clean.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+      if (timeMatch) {
+        hours = parseInt(timeMatch[1], 10);
+        minutes = parseInt(timeMatch[2], 10);
+        seconds = timeMatch[3] ? parseInt(timeMatch[3], 10) : 0;
+        const isPM = clean.includes('م') || /pm/i.test(clean);
+        const isAM = clean.includes('ص') || /am/i.test(clean);
+        if (isPM && hours < 12) hours += 12;
+        if (isAM && hours === 12) hours = 0;
+      }
+
+      // Extract YYYY/MM/DD or DD/MM/YYYY
+      let year = 0, month = 0, day = 0;
+      const ymd = clean.match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
       if (ymd) {
-        const year = parseInt(ymd[1], 10);
-        const month = parseInt(ymd[2], 10) - 1;
-        const day = parseInt(ymd[3], 10);
-        return new Date(year, month, day);
+        year = parseInt(ymd[1], 10);
+        month = parseInt(ymd[2], 10) - 1;
+        day = parseInt(ymd[3], 10);
+      } else {
+        const dmy = clean.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+        if (dmy) {
+          day = parseInt(dmy[1], 10);
+          month = parseInt(dmy[2], 10) - 1;
+          year = parseInt(dmy[3], 10);
+        }
       }
-      // Look for D/M/YYYY or D-M-YYYY
-      const dmy = cleanStr.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
-      if (dmy) {
-        const day = parseInt(dmy[1], 10);
-        const month = parseInt(dmy[2], 10) - 1;
-        const year = parseInt(dmy[3], 10);
-        return new Date(year, month, day);
+
+      if (year >= 2020) {
+        const d = new Date(year, month, day, hours, minutes, seconds);
+        if (!isNaN(d.getTime())) return d.getTime();
       }
+
+      const fallbackD = new Date(strDate);
+      if (!isNaN(fallbackD.getTime())) return fallbackD.getTime();
     }
-    return null;
+
+    // 5. Tie-breaker by TR or invoice ID sequence
+    if (record.id && typeof record.id === 'string') {
+      const trMatch = record.id.match(/TR-(\d+)/i);
+      if (trMatch) return parseInt(trMatch[1], 10);
+    }
+    return 0;
+  },
+
+  parseRecordDate(record) {
+    const ts = this.getRecordTimestamp(record);
+    return ts > 0 ? new Date(ts) : null;
   },
 
   isRecordInPeriod(record, period = 'all') {
@@ -1400,6 +1433,7 @@ const App = {
       return matchPeriod && matchSeller;
     });
 
+    filtered.sort((a, b) => this.getRecordTimestamp(b) - this.getRecordTimestamp(a));
     const recent = filtered.slice(0, 5);
     if (recent.length === 0) {
       recentInvoicesTable.innerHTML = `<tr><td colspan="7" class="text-center" style="text-align:center; padding: 20px; color: var(--text-muted);">لا توجد فواتير مطابقة للفلاتر المحددة</td></tr>`;
@@ -1795,7 +1829,27 @@ const App = {
     this.recalcPOSCartTotals();
   },
 
+  handleNumericInputFocus(input) {
+    if (!input) return;
+    setTimeout(() => {
+      try {
+        input.select();
+        input.setSelectionRange(0, 9999);
+      } catch (e) {}
+    }, 50);
+  },
+
+  handleNumericInputKeyDown(input, e) {
+    if (!input || !e) return;
+    if ((input.value === '0' || input.value === '0.00') && /^[1-9]$/.test(e.key)) {
+      input.value = '';
+    }
+  },
+
   updateCartItemPrice(itemId, priceVal) {
+    if (this.isCurrentUserRep() && !this.isCurrentUserAdmin()) {
+      return; // Reps cannot change price
+    }
     const itemInCart = this.currentCart.items.find(i => i.id === itemId);
     if (!itemInCart) return;
     const p = Math.max(0, this.parseNumber(priceVal, 0));
@@ -1982,24 +2036,35 @@ const App = {
       if (this.currentCart.items.length === 0) {
         listEl.innerHTML = `<div class="empty-cart-msg">السلة فارغة، اختر الأصناف بالقروصة لإضافتها للفاتورة</div>`;
       } else {
+        const canEditPrice = this.isCurrentUserAdmin() || (!this.isCurrentUserRep() && this.hasPermission('الأسعار وسياسة البيع'));
         listEl.innerHTML = this.currentCart.items.map(it => `
           <div class="cart-item" style="padding: 10px 12px; gap: 8px;">
             <div class="cart-item-info" style="flex: 1;">
               <div class="cart-item-title" style="font-weight: 700;">${it.name}</div>
               <div style="display: flex; align-items: center; gap: 6px; margin-top: 4px;">
                 <span style="font-size: 0.76rem; color: var(--text-secondary);">السعر:</span>
-                <input type="text" inputmode="decimal" id="cart-price-${it.id}" value="${it.price}" 
-                       oninput="App.updateCartItemPrice('${it.id}', this.value)" 
-                       onfocus="this.select()" onclick="this.select()"
-                       style="width: 76px; height: 26px; padding: 2px 6px; font-size: 0.85rem; font-weight: 800; background: rgba(15, 23, 42, 0.9); border: 1px solid var(--border-subtle); color: var(--emerald-neon); border-radius: 4px; text-align: center;" 
-                       title="اكتب سعر البيع يدوياً">
+                ${!canEditPrice ? `
+                  <span class="cart-fixed-price" style="width: 76px; height: 26px; font-size: 0.85rem; font-weight: 800; background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(255, 255, 255, 0.08); color: var(--emerald-neon); border-radius: 4px; cursor: not-allowed;" title="السعر محدد من الإدارة وغير قابل للتعديل">
+                    ${this.formatMoney(it.price)} 🔒
+                  </span>
+                ` : `
+                  <input type="text" inputmode="decimal" id="cart-price-${it.id}" value="${it.price}" 
+                         oninput="App.updateCartItemPrice('${it.id}', this.value)" 
+                         onfocus="App.handleNumericInputFocus(this)" onclick="App.handleNumericInputFocus(this)"
+                         onkeydown="App.handleNumericInputKeyDown(this, event)"
+                         class="cart-numeric-input"
+                         style="width: 76px; height: 26px; padding: 2px 6px; font-size: 0.85rem; font-weight: 800; background: rgba(15, 23, 42, 0.9); border: 1px solid var(--border-subtle); color: var(--emerald-neon); border-radius: 4px; text-align: center;" 
+                         title="اكتب سعر البيع يدوياً">
+                `}
                 <span style="font-size: 0.72rem; color: var(--text-muted);">ج.م</span>
               </div>
               <div style="display: flex; align-items: center; gap: 6px; margin-top: 6px;">
                 <span style="font-size: 0.75rem; color: var(--gold); font-weight: 600;">خصم الصنف:</span>
                 <input type="text" inputmode="decimal" id="cart-disc-${it.id}" value="${it.discount || 0}" 
                        oninput="App.updateCartItemDiscount('${it.id}', this.value)" 
-                       onfocus="this.select()" onclick="this.select()"
+                       onfocus="App.handleNumericInputFocus(this)" onclick="App.handleNumericInputFocus(this)"
+                       onkeydown="App.handleNumericInputKeyDown(this, event)"
+                       class="cart-numeric-input"
                        style="width: 70px; height: 26px; padding: 2px 6px; font-size: 0.8rem; background: rgba(15, 23, 42, 0.8); border: 1px solid ${it.discount > 0 ? 'var(--gold)' : 'var(--border-subtle)'}; color: ${it.discount > 0 ? 'var(--gold)' : 'var(--text-white)'}; border-radius: 4px; text-align: center;" 
                        placeholder="0" title="خصم بالجنيه على هذا الصنف">
                 <span style="font-size: 0.72rem; color: var(--text-muted);">ج.م</span>
@@ -2010,7 +2075,9 @@ const App = {
                 <button type="button" class="cart-qty-btn" onclick="App.updateCartQty('${it.id}', -1)">-</button>
                 <input type="text" inputmode="numeric" id="cart-qty-${it.id}" value="${it.qty}" 
                        oninput="App.updateCartItemQtyInput('${it.id}', this.value)" 
-                       onfocus="this.select()" onclick="this.select()"
+                       onfocus="App.handleNumericInputFocus(this)" onclick="App.handleNumericInputFocus(this)"
+                       onkeydown="App.handleNumericInputKeyDown(this, event)"
+                       class="cart-numeric-input"
                        style="width: 44px; height: 28px; padding: 2px; font-size: 0.9rem; font-weight: 800; background: rgba(15, 23, 42, 0.9); border: 1px solid var(--border-subtle); color: var(--text-white); border-radius: 4px; text-align: center;" 
                        title="اكتب الكمية يدوياً">
                 <button type="button" class="cart-qty-btn" onclick="App.updateCartQty('${it.id}', 1)">+</button>
@@ -2263,7 +2330,7 @@ const App = {
         <!-- Header -->
         <div class="receipt-header">
           <div class="receipt-title">
-            <span>${this.db?.settings?.businessName || 'مؤسسة الدخان والسجائر ERP'}</span>
+            <span>${(this.db?.settings?.businessName && this.db.settings.businessName.trim()) ? this.db.settings.businessName.trim() : (this.db?.settings?.ownerName?.trim() || 'حسام')}</span>
             <span>🚬</span>
           </div>
           <div class="receipt-subtitle">تجارة الجملة والتجزئة • سجائر محلية ومستوردة</div>
@@ -2496,6 +2563,10 @@ const App = {
     `;
 
     this.openModal(modalHtml);
+    setTimeout(() => {
+      const mb = document.querySelector('.receipt-modal-body');
+      if (mb) mb.scrollTop = 0;
+    }, 20);
   },
 
   // أيقونة واتساب الرسمية بصيغة SVG عالية النقاء
@@ -2573,7 +2644,10 @@ const App = {
 
     // Header (Title, Subtitle, Info)
     ctx.font = 'bold 21px Cairo, sans-serif';
-    ctx.fillText(`${this.db.settings.businessName || 'مؤسسة الدخان والسجائر ERP'} 🚬`, width / 2, 45);
+    const bizCanvasTitle = (this.db?.settings?.businessName && this.db.settings.businessName.trim()) 
+      ? this.db.settings.businessName.trim() 
+      : (this.db?.settings?.ownerName?.trim() || 'حسام');
+    ctx.fillText(`${bizCanvasTitle} 🚬`, width / 2, 45);
 
     ctx.font = 'bold 12px Cairo, sans-serif';
     ctx.fillStyle = '#475569';
@@ -5535,6 +5609,9 @@ const App = {
       return matchSearch && matchDate && matchSeller;
     });
 
+    // Ensure strictly newest first
+    filteredInvoices.sort((a, b) => this.getRecordTimestamp(b) - this.getRecordTimestamp(a));
+
     const invTbody = document.getElementById('reports-invoices-tbody');
     if (invTbody) {
       if (filteredInvoices.length === 0) {
@@ -5588,6 +5665,9 @@ const App = {
 
         return matchSearch && matchDate && matchSeller;
       });
+
+      // Ensure strictly newest first
+      filteredLogs.sort((a, b) => this.getRecordTimestamp(b) - this.getRecordTimestamp(a));
 
       // Update Badges
       const invBadge = document.getElementById('reports-invoices-badge');
@@ -5697,6 +5777,10 @@ const App = {
     `;
 
     this.openModal(modalHtml);
+    setTimeout(() => {
+      const mb = document.querySelector('.receipt-modal-body');
+      if (mb) mb.scrollTop = 0;
+    }, 20);
   },
 
   // ==========================================

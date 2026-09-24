@@ -1307,6 +1307,22 @@ body {
   border-color: var(--emerald-neon);
 }
 
+.cart-numeric-input {
+  direction: ltr !important;
+  unicode-bidi: plaintext !important;
+  text-align: center !important;
+  -webkit-user-select: text !important;
+  user-select: text !important;
+}
+
+.cart-fixed-price {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  direction: ltr !important;
+  user-select: none;
+}
+
 .cart-actions-grid {
   display: grid;
   grid-template-columns: 1fr;

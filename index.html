@@ -445,7 +445,7 @@
 
               <div class="cart-calc-row">
                 <span>خصم الفاتورة (ج.م):</span>
-                <input type="text" inputmode="decimal" id="cart-discount-input" class="cart-input-mini" value="0" placeholder="0" oninput="App.handleCartDiscountChange()" onfocus="this.select()">
+                <input type="text" inputmode="decimal" id="cart-discount-input" class="cart-input-mini cart-numeric-input" value="0" placeholder="0" oninput="App.handleCartDiscountChange()" onfocus="App.handleNumericInputFocus(this)" onclick="App.handleNumericInputFocus(this)" onkeydown="App.handleNumericInputKeyDown(this, event)">
               </div>
 
               <div class="cart-calc-row total-row">
@@ -456,7 +456,7 @@
               <div class="cart-calc-row" style="align-items: center;">
                 <span>المبلغ المدفوع (كاش):</span>
                 <div style="display: flex; align-items: center; gap: 4px;">
-                  <input type="text" inputmode="decimal" id="cart-paid-input" class="cart-input-mini" placeholder="المدفوع" oninput="App.handleCartPaidChange()" onfocus="this.select()" style="width: 75px;">
+                  <input type="text" inputmode="decimal" id="cart-paid-input" class="cart-input-mini cart-numeric-input" placeholder="المدفوع" oninput="App.handleCartPaidChange()" onfocus="App.handleNumericInputFocus(this)" onclick="App.handleNumericInputFocus(this)" onkeydown="App.handleNumericInputKeyDown(this, event)" style="width: 75px;">
                   <button type="button" class="btn btn-sm" onclick="App.setCartPaidFull()" title="سداد كامل المبلغ كاش" style="padding: 2px 6px; font-size: 0.72rem; background: rgba(16, 185, 129, 0.2); border: 1px solid var(--emerald); color: var(--emerald); border-radius: 4px; cursor: pointer;">كاش</button>
                   <button type="button" class="btn btn-sm" onclick="App.setCartPaidZero()" title="آجل بالكامل (0 مدفوع)" style="padding: 2px 6px; font-size: 0.72rem; background: rgba(239, 68, 68, 0.2); border: 1px solid var(--rose); color: var(--rose); border-radius: 4px; cursor: pointer;">آجل</button>
                 </div>
