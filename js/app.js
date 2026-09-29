@@ -164,10 +164,9 @@ const App = {
     this.applyUserPermissionsUI();
     this.updateHeaderProfile();
     this.updateLiveSidebarStats();
-    if (!this.canAccessPage(this.activePage)) {
-      this.activePage = this.getFirstAllowedPage();
-    }
-    this.navigateTo(this.activePage || 'dashboard');
+    const targetPage = this.canAccessPage(this.activePage) ? this.activePage : this.getFirstAllowedPage();
+    this.activePage = null; // Reset to force navigateTo DOM execution
+    this.navigateTo(targetPage || 'pos');
   },
 
   _uiRefreshTimer: null,
@@ -334,8 +333,8 @@ const App = {
       const netFromTx = totalPurchasesFromInvoices - (totalPaidFromInvoices + totalPaidFromReceipts);
 
       // Preserve or initialize openingDebt seamlessly without modifying Firebase structure
+      const knownDebt = typeof cust.currentDebt === 'number' ? cust.currentDebt : (Number(cust.currentDebt) || 0);
       if (cust.openingDebt === undefined || cust.openingDebt === null) {
-        const knownDebt = typeof cust.currentDebt === 'number' ? cust.currentDebt : (Number(cust.currentDebt) || 0);
         if (knownDebt !== netFromTx && (knownDebt > 0 || (custInvoices.length === 0 && custReceipts.length === 0))) {
           cust.openingDebt = knownDebt - netFromTx;
         } else {
@@ -346,7 +345,14 @@ const App = {
       const openingDebt = Number(cust.openingDebt) || 0;
       cust.totalPurchases = Math.max(0, openingDebt + totalPurchasesFromInvoices);
       cust.totalPaid = totalPaidFromInvoices + totalPaidFromReceipts;
-      cust.currentDebt = Math.max(0, (openingDebt + totalPurchasesFromInvoices) - cust.totalPaid);
+
+      if (custInvoices.length > 0 || custReceipts.length > 0) {
+        cust.currentDebt = Math.max(0, (openingDebt + totalPurchasesFromInvoices) - cust.totalPaid);
+      } else if (knownDebt > 0) {
+        cust.currentDebt = knownDebt;
+      } else {
+        cust.currentDebt = Math.max(0, (openingDebt + totalPurchasesFromInvoices) - cust.totalPaid);
+      }
     });
   },
 
@@ -406,10 +412,13 @@ const App = {
     });
     if (typeof u3 === 'function') this._unsubListeners.push(u3);
 
-    // 4. Treasury Logs Realtime Sync
+    // 4. Treasury Logs Realtime Sync with Smart Merge (never drops pending local receipts/supplies)
     const u4 = window.FDB.initRealtimeSync('treasury', (logs) => {
       if (logs && Array.isArray(logs)) {
-        this.db.treasuryLogs = logs.sort((a, b) => this.getRecordTimestamp(b) - this.getRecordTimestamp(a));
+        const incomingIds = new Set(logs.map(l => String(l.id)));
+        const pendingLocal = (this.db.treasuryLogs || []).filter(ll => !incomingIds.has(String(ll.id)));
+        const allLogs = [...logs, ...pendingLocal];
+        this.db.treasuryLogs = allLogs.sort((a, b) => this.getRecordTimestamp(b) - this.getRecordTimestamp(a));
         this.syncDB();
         this.showCloudSyncOverlay(false);
         this.updateCloudStatus('online', 'سحابي متصل');
@@ -418,10 +427,12 @@ const App = {
     });
     if (typeof u4 === 'function') this._unsubListeners.push(u4);
 
-    // 5. Reps Realtime Sync
+    // 5. Reps Realtime Sync with Smart Merge
     const u5 = window.FDB.initRealtimeSync('reps', (reps) => {
       if (reps && Array.isArray(reps)) {
-        this.db.reps = reps;
+        const incomingIds = new Set(reps.map(r => String(r.id)));
+        const pendingLocal = (this.db.reps || []).filter(lr => !incomingIds.has(String(lr.id)));
+        this.db.reps = [...reps, ...pendingLocal];
         this.sanitizeRepsData();
         this.reconcileRepsStats();
         this.syncDB();
@@ -1831,17 +1842,14 @@ const App = {
 
   handleNumericInputFocus(input) {
     if (!input) return;
-    setTimeout(() => {
-      try {
-        input.select();
-        input.setSelectionRange(0, 9999);
-      } catch (e) {}
-    }, 50);
+    try {
+      input.select();
+    } catch (e) {}
   },
 
   handleNumericInputKeyDown(input, e) {
     if (!input || !e) return;
-    if ((input.value === '0' || input.value === '0.00') && /^[1-9]$/.test(e.key)) {
+    if ((input.value === '0' || input.value === '0.00') && /^[0-9]$/.test(e.key)) {
       input.value = '';
     }
   },
@@ -2050,7 +2058,7 @@ const App = {
                 ` : `
                   <input type="text" inputmode="decimal" id="cart-price-${it.id}" value="${it.price}" 
                          oninput="App.updateCartItemPrice('${it.id}', this.value)" 
-                         onfocus="App.handleNumericInputFocus(this)" onclick="App.handleNumericInputFocus(this)"
+                         onfocus="App.handleNumericInputFocus(this)" 
                          onkeydown="App.handleNumericInputKeyDown(this, event)"
                          class="cart-numeric-input"
                          style="width: 76px; height: 26px; padding: 2px 6px; font-size: 0.85rem; font-weight: 800; background: rgba(15, 23, 42, 0.9); border: 1px solid var(--border-subtle); color: var(--emerald-neon); border-radius: 4px; text-align: center;" 
@@ -2062,7 +2070,7 @@ const App = {
                 <span style="font-size: 0.75rem; color: var(--gold); font-weight: 600;">خصم الصنف:</span>
                 <input type="text" inputmode="decimal" id="cart-disc-${it.id}" value="${it.discount || 0}" 
                        oninput="App.updateCartItemDiscount('${it.id}', this.value)" 
-                       onfocus="App.handleNumericInputFocus(this)" onclick="App.handleNumericInputFocus(this)"
+                       onfocus="App.handleNumericInputFocus(this)" 
                        onkeydown="App.handleNumericInputKeyDown(this, event)"
                        class="cart-numeric-input"
                        style="width: 70px; height: 26px; padding: 2px 6px; font-size: 0.8rem; background: rgba(15, 23, 42, 0.8); border: 1px solid ${it.discount > 0 ? 'var(--gold)' : 'var(--border-subtle)'}; color: ${it.discount > 0 ? 'var(--gold)' : 'var(--text-white)'}; border-radius: 4px; text-align: center;" 
@@ -2075,7 +2083,7 @@ const App = {
                 <button type="button" class="cart-qty-btn" onclick="App.updateCartQty('${it.id}', -1)">-</button>
                 <input type="text" inputmode="numeric" id="cart-qty-${it.id}" value="${it.qty}" 
                        oninput="App.updateCartItemQtyInput('${it.id}', this.value)" 
-                       onfocus="App.handleNumericInputFocus(this)" onclick="App.handleNumericInputFocus(this)"
+                       onfocus="App.handleNumericInputFocus(this)" 
                        onkeydown="App.handleNumericInputKeyDown(this, event)"
                        class="cart-numeric-input"
                        style="width: 44px; height: 28px; padding: 2px; font-size: 0.9rem; font-weight: 800; background: rgba(15, 23, 42, 0.9); border: 1px solid var(--border-subtle); color: var(--text-white); border-radius: 4px; text-align: center;" 
@@ -2428,18 +2436,14 @@ const App = {
           </div>
 
           ${paidFromOldDebt > 0 ? `
-            <div class="receipt-total-row paid-part-inv">
-              <span class="lbl">تم سداد للفاتورة:</span>
-              <span class="val">${this.formatMoney(paidForInvoice || (paid - paidFromOldDebt))} ج.م</span>
-            </div>
             <div class="receipt-total-row paid-part-old">
-              <span class="lbl">تم سداد من الدين السابق:</span>
-              <span class="val">${this.formatMoney(paidFromOldDebt)} ج.م</span>
+              <span class="lbl">سداد من الدين القديم:</span>
+              <span class="val" style="color: #059669; font-weight: 800;">${this.formatMoney(paidFromOldDebt)} ج.م</span>
             </div>
           ` : `
             <div class="receipt-total-row remaining">
               <span class="lbl">المتبقي من الفاتورة الجديدة:</span>
-              <span class="val">${this.formatMoney(remaining)} ج.م</span>
+              <span class="val" style="${remaining > 0 ? 'color: #dc2626; font-weight: 800;' : ''}">${this.formatMoney(remaining)} ج.م</span>
             </div>
           `}
 
@@ -2467,9 +2471,13 @@ const App = {
       return;
     }
 
+    const custSel = document.getElementById('cart-customer-select');
+    if (!this.currentCart.customerId && custSel && custSel.value) {
+      this.currentCart.customerId = custSel.value;
+    }
+
     if (!this.currentCart.customerId) {
       this.showToast('عفواً، يجب اختيار عميل مسجل لإصدار الفاتورة (تم إلغاء البيع لعميل نقدي عام)', 'error');
-      const custSel = document.getElementById('cart-customer-select');
       if (custSel) {
         custSel.focus();
         custSel.style.borderColor = 'var(--rose)';
@@ -2477,7 +2485,7 @@ const App = {
       return;
     }
 
-    const customer = this.db.customers.find(c => c.id === this.currentCart.customerId);
+    const customer = (this.db.customers || []).find(c => c.id === this.currentCart.customerId || String(c.id) === String(this.currentCart.customerId));
     if (!customer) {
       this.showToast('يرجى اختيار عميل مسجل صحيح من القائمة', 'error');
       return;
@@ -3653,15 +3661,19 @@ const App = {
     this.db.treasury = (Number(this.db.treasury) || 0) + amount;
 
     // Add to Treasury logs
-    this.db.treasuryLogs.unshift({
+    const supplyLog = {
       id: `TR-${Date.now().toString().slice(-4)}`,
       date: new Date().toLocaleString('ar-EG-u-nu-latn'),
+      dateTime: new Date().toISOString(),
+      localTimestamp: new Date().toISOString(),
+      timestamp: Date.now(),
       type: 'توريد نقدية مندوب',
       sourceName: `${rep.name} (مندوب)`,
       receivedBy: this.db.currentUser?.name || 'حسام',
       amount: amount,
       notes: notes
-    });
+    };
+    this.db.treasuryLogs.unshift(supplyLog);
 
     // Add Notification
     this.addNotification({
@@ -4716,34 +4728,50 @@ const App = {
           <span style="height: 1px; flex: 1; background: var(--border-subtle);"></span>
         </div>
 
-        <!-- Available Qty Input (Editable in case of previous mistake) -->
-        <div class="form-group">
-          <label class="form-label" style="display: flex; justify-content: space-between; align-items: center;">
-            <span>الكمية المتاحة (قروصة)</span>
-            <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: normal;">(الرصيد الحالي بالمخزن - عدّله هنا إذا سُجل خطأ)</span>
-          </label>
-          <input type="number" id="restock-available-qty" class="form-control" value="${activeItem.cartonsInStock}" min="0" oninput="App.recalcRestockModal()">
+        <!-- Live Visual Restock Formula Banner -->
+        <div style="background: rgba(16, 185, 129, 0.12); border: 1.5px solid rgba(16, 185, 129, 0.4); border-radius: 8px; padding: 12px 14px; text-align: center; margin: 6px 0 12px 0;">
+          <div style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 4px;">المعادلة الحسابية للرصيد بعد التوريد:</div>
+          <div style="display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 800; font-size: 1.05rem; flex-wrap: wrap;">
+            <span>الرصيد الحالي: <strong id="restock-banner-cur" style="color: #10b981;">${activeItem.cartonsInStock}</strong></span>
+            <span style="color: var(--text-muted);">+</span>
+            <span>الوارد الجديد: <strong id="restock-banner-new" style="color: #f59e0b;">0</strong></span>
+            <span style="color: var(--text-muted);">=</span>
+            <span>الرصيد الكلي بعد التوريد: <strong id="restock-banner-total" style="color: #38bdf8; font-size: 1.25rem;">${activeItem.cartonsInStock}</strong> قروصة</span>
+          </div>
         </div>
 
-        <!-- New Inward Inputs -->
-        <div class="form-group">
-          <label class="form-label">الكمية الواردة الجديدة (قروصة)</label>
-          <input type="number" id="restock-new-qty" class="form-control" value="0" min="0" oninput="App.recalcRestockModal()" placeholder="0">
+        <!-- Primary Input: New Inward Cartons -->
+        <div class="form-group" style="background: rgba(245, 158, 11, 0.08); border: 1.5px solid rgba(245, 158, 11, 0.35); padding: 12px; border-radius: 8px;">
+          <label class="form-label" style="font-weight: 800; color: #f59e0b; font-size: 1rem; margin-bottom: 6px;">
+            📥 الكمية الواردة الجديدة المراد إضافتها للمخزن (قروصة) *
+          </label>
+          <input type="number" id="restock-new-qty" class="form-control" value="0" min="0" oninput="App.recalcRestockModal()" onfocus="this.select()" placeholder="0" style="font-size: 1.25rem; font-weight: 900; color: #10b981; height: 44px; text-align: center;">
+        </div>
+
+        <!-- Available Qty Input (Protected by default, editable only if unlocked) -->
+        <div class="form-group" style="margin-top: 4px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+            <label class="form-label" style="margin: 0;">الرصيد الحالي بالمخزن قبل التوريد (قروصة)</label>
+            <button type="button" id="restock-unlock-btn" class="btn btn-sm" onclick="App.toggleManualAvailableQty()" style="padding: 2px 8px; font-size: 0.72rem; background: rgba(255,255,255,0.08); border: 1px solid var(--border-subtle); color: var(--text-secondary); cursor: pointer;" title="انقر لتعديل الرصيد يدوياً في حال وجود خطأ في الجرد">
+              ✏️ تعديل الرصيد يدوياً
+            </button>
+          </div>
+          <input type="number" id="restock-available-qty" class="form-control" value="${activeItem.cartonsInStock}" min="0" readonly oninput="App.recalcRestockModal()" onfocus="this.select()" style="background: rgba(15, 23, 42, 0.6); opacity: 0.9;">
         </div>
 
         <div class="form-group">
           <label class="form-label">سعر شراء الدفعة الجديدة (ج.م)</label>
-          <input type="number" id="restock-new-buy" class="form-control" value="${activeItem.purchasePrice}" min="0" oninput="App.recalcRestockModal()">
+          <input type="number" id="restock-new-buy" class="form-control" value="${activeItem.purchasePrice}" min="0" oninput="App.recalcRestockModal()" onfocus="this.select()">
         </div>
 
         <div class="form-group">
           <label class="form-label">سعر البيع الجديد للجمهور (ج.م)</label>
-          <input type="number" id="restock-new-sell" class="form-control" value="${activeItem.sellingPrice}" min="0" oninput="App.recalcRestockModal()">
+          <input type="number" id="restock-new-sell" class="form-control" value="${activeItem.sellingPrice}" min="0" oninput="App.recalcRestockModal()" onfocus="this.select()">
         </div>
 
         <div class="form-group">
           <label class="form-label">حد إعادة الطلب الحرج (قروصة)</label>
-          <input type="number" id="restock-new-reorder" class="form-control" value="${activeItem.reorderLevel || 5}" min="1">
+          <input type="number" id="restock-new-reorder" class="form-control" value="${activeItem.reorderLevel || 5}" min="1" onfocus="this.select()">
         </div>
 
         <!-- Calculated Summary Box (4 blocks) -->
@@ -4807,6 +4835,25 @@ const App = {
     this.recalcRestockModal();
   },
 
+  toggleManualAvailableQty() {
+    const inp = document.getElementById('restock-available-qty');
+    const btn = document.getElementById('restock-unlock-btn');
+    if (!inp) return;
+    const isReadOnly = inp.readOnly;
+    inp.readOnly = !isReadOnly;
+    if (isReadOnly) {
+      inp.style.background = 'rgba(15, 23, 42, 0.9)';
+      inp.style.borderColor = 'var(--gold)';
+      if (btn) btn.innerHTML = '🔒 قفل التعديل';
+      inp.focus();
+      try { inp.select(); } catch (e) {}
+    } else {
+      inp.style.background = 'rgba(15, 23, 42, 0.6)';
+      inp.style.borderColor = 'var(--border-subtle)';
+      if (btn) btn.innerHTML = '✏️ تعديل الرصيد يدوياً';
+    }
+  },
+
   recalcRestockModal() {
     const itemId = document.getElementById('restock-item-select')?.value;
     const item = this.db.items.find(i => i.id === itemId);
@@ -4824,6 +4871,15 @@ const App = {
     if (curQtyEl) curQtyEl.textContent = currentQty;
 
     const totalQty = currentQty + newQty;
+
+    // Update live visual formula banner
+    const bannerCur = document.getElementById('restock-banner-cur');
+    const bannerNew = document.getElementById('restock-banner-new');
+    const bannerTotal = document.getElementById('restock-banner-total');
+    if (bannerCur) bannerCur.textContent = currentQty;
+    if (bannerNew) bannerNew.textContent = newQty;
+    if (bannerTotal) bannerTotal.textContent = totalQty;
+
     let wac = currentBuy;
     if (newQty > 0) {
       const currentTotalVal = currentQty * currentBuy;
@@ -5139,6 +5195,8 @@ const App = {
     const isRep = this.isCurrentUserRep();
     const currentRep = this.activeRepForPOS || (isRep ? this.getLinkedRep() : null);
 
+    const curDebt = Number(customer.currentDebt || 0);
+
     const modalHtml = `
       <div class="modal-header">
         <h3>💵 سند قبض نقدي للعميل: ${customer.name}</h3>
@@ -5147,12 +5205,20 @@ const App = {
       <div class="modal-body">
         <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); padding: 12px 16px; border-radius: var(--radius-md); margin-bottom: 14px;">
           <div style="font-size: 0.85rem; color: var(--text-secondary);">المتبقي الحالي في ذمة العميل (الدين المستحق):</div>
-          <div style="font-size: 1.4rem; font-weight: 800; color: var(--rose);">${this.formatMoney(customer.currentDebt)} ج.م</div>
+          <div style="font-size: 1.4rem; font-weight: 800; color: var(--rose);">${this.formatMoney(curDebt)} ج.م</div>
         </div>
 
         <div class="form-group">
           <label class="form-label">المبلغ المقبوض نقداً (ج.م) *</label>
-          <input type="number" id="receipt-amount" class="form-control" value="${customer.currentDebt > 0 ? customer.currentDebt : ''}" placeholder="0.00" min="1">
+          <input type="number" id="receipt-amount" class="form-control" value="${curDebt > 0 ? curDebt : ''}" placeholder="0.00" min="1" oninput="App.recalcPaymentReceiptModal(${curDebt})" onfocus="this.select()" style="font-size: 1.25rem; font-weight: 900; color: #10b981;">
+        </div>
+
+        <!-- Live Remaining Debt Calculation -->
+        <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); padding: 10px 14px; border-radius: var(--radius-md); margin-top: 4px; margin-bottom: 12px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+            <span style="font-size: 0.85rem; color: var(--text-secondary);">المتبقي في ذمة العميل بعد هذا السداد:</span>
+            <strong id="receipt-rem-debt-val" style="font-size: 1.15rem; color: var(--emerald);">${curDebt > 0 ? '0 ج.م (مسدد بالكامل ✓)' : '0 ج.م'}</strong>
+          </div>
         </div>
 
         <div class="form-group">
@@ -5168,6 +5234,21 @@ const App = {
       </div>
     `;
     this.openModal(modalHtml);
+  },
+
+  recalcPaymentReceiptModal(curDebt) {
+    const val = this.parseNumber(document.getElementById('receipt-amount')?.value, 0);
+    const rem = Math.max(0, curDebt - val);
+    const remEl = document.getElementById('receipt-rem-debt-val');
+    if (remEl) {
+      if (rem === 0 && curDebt > 0 && val >= curDebt) {
+        remEl.textContent = '0 ج.م (مسدد بالكامل ✓)';
+        remEl.style.color = 'var(--emerald)';
+      } else {
+        remEl.textContent = this.formatMoney(rem) + ' ج.م';
+        remEl.style.color = rem > 0 ? 'var(--rose)' : 'var(--emerald)';
+      }
+    }
   },
 
   savePaymentReceipt(custId, receiptNo) {
@@ -5220,6 +5301,9 @@ const App = {
     const logEntry = {
       id: receiptNo,
       date: new Date().toLocaleString('ar-EG-u-nu-latn'),
+      dateTime: new Date().toISOString(),
+      localTimestamp: new Date().toISOString(),
+      timestamp: Date.now(),
       type: logType,
       sourceName: customer.name,
       customerId: customer.id,
@@ -5660,7 +5744,8 @@ const App = {
         if (seller === 'admin') {
           matchSeller = !log.receivedBy || log.receivedBy === 'حسام' || log.receivedBy.includes('حسام') || log.receivedBy.includes('الإدارة');
         } else if (seller !== 'all') {
-          matchSeller = (log.sourceName && log.sourceName.includes(seller)) || log.receivedBy === seller;
+          matchSeller = (log.sourceName && log.sourceName.includes(seller)) || 
+                        (log.receivedBy && log.receivedBy.includes(seller));
         }
 
         return matchSearch && matchDate && matchSeller;
@@ -6917,7 +7002,7 @@ const App = {
         <div class="form-row">
           <div class="form-group" id="new-rec-source-select-wrap">
             <label class="form-label">العميل / المصدر *</label>
-            <select id="new-rec-source-select" class="custom-select">
+            <select id="new-rec-source-select" class="custom-select" onchange="App.recalcNewReceiptModal()">
               <option value="">-- اختر العميل --</option>
               ${customersOptions}
             </select>
@@ -6928,7 +7013,21 @@ const App = {
           </div>
           <div class="form-group">
             <label class="form-label">المبلغ المودع (ج.م) *</label>
-            <input type="number" id="new-rec-amount" class="form-control" placeholder="0.00" min="1" style="color: var(--emerald); font-weight: bold; font-size: 1.1rem;">
+            <input type="number" id="new-rec-amount" class="form-control" placeholder="0.00" min="1" oninput="App.recalcNewReceiptModal()" onfocus="this.select()" style="color: var(--emerald); font-weight: bold; font-size: 1.1rem;">
+          </div>
+        </div>
+
+        <!-- Live Debt Breakdown Banner -->
+        <div id="new-rec-debt-preview" style="display: none; background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 8px; padding: 10px 14px; margin-bottom: 12px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+            <div>
+              <span style="font-size: 0.82rem; color: var(--text-secondary);">المديونية الحالية على العميل:</span>
+              <strong id="new-rec-cur-debt" style="color: var(--rose); margin-right: 4px;">0 ج.م</strong>
+            </div>
+            <div>
+              <span style="font-size: 0.82rem; color: var(--text-secondary);">المتبقي بعد هذا السند:</span>
+              <strong id="new-rec-rem-debt" style="color: var(--emerald); margin-right: 4px;">0 ج.م</strong>
+            </div>
           </div>
         </div>
 
@@ -6970,9 +7069,12 @@ const App = {
           `<option value="cust_${c.id}">${c.name} (دين: ${this.formatMoney(c.currentDebt)})</option>`
         ).join('');
       }
+      this.recalcNewReceiptModal();
     } else if (val === 'توريد نقدية مندوب') {
       if (selectWrap) selectWrap.style.display = 'block';
       if (textWrap) textWrap.style.display = 'none';
+      const previewBox = document.getElementById('new-rec-debt-preview');
+      if (previewBox) previewBox.style.display = 'none';
       if (selectEl) {
         selectEl.innerHTML = '<option value="">-- اختر المندوب --</option>' + (this.db.reps || []).map(r => 
           `<option value="rep_${r.id}">مندوب: ${r.name} (عهدة نقدية: ${this.formatMoney(r.currentCash)})</option>`
@@ -6981,6 +7083,45 @@ const App = {
     } else {
       if (selectWrap) selectWrap.style.display = 'none';
       if (textWrap) textWrap.style.display = 'block';
+      const previewBox = document.getElementById('new-rec-debt-preview');
+      if (previewBox) previewBox.style.display = 'none';
+    }
+  },
+
+  recalcNewReceiptModal() {
+    const type = document.getElementById('new-rec-type')?.value;
+    const previewBox = document.getElementById('new-rec-debt-preview');
+    if (type !== 'سند قبض عميل') {
+      if (previewBox) previewBox.style.display = 'none';
+      return;
+    }
+    const val = document.getElementById('new-rec-source-select')?.value;
+    if (!val || !val.startsWith('cust_')) {
+      if (previewBox) previewBox.style.display = 'none';
+      return;
+    }
+    const custId = val.replace('cust_', '');
+    const cust = (this.db.customers || []).find(c => c.id === custId || String(c.id) === String(custId));
+    if (!cust) {
+      if (previewBox) previewBox.style.display = 'none';
+      return;
+    }
+    const curDebt = Number(cust.currentDebt || 0);
+    const amount = this.parseNumber(document.getElementById('new-rec-amount')?.value, 0);
+    const remDebt = Math.max(0, curDebt - amount);
+
+    if (previewBox) previewBox.style.display = 'block';
+    const curDebtEl = document.getElementById('new-rec-cur-debt');
+    const remDebtEl = document.getElementById('new-rec-rem-debt');
+    if (curDebtEl) curDebtEl.textContent = this.formatMoney(curDebt) + ' ج.م';
+    if (remDebtEl) {
+      if (remDebt === 0 && curDebt > 0 && amount >= curDebt) {
+        remDebtEl.textContent = '0 ج.م (مسدد بالكامل ✓)';
+        remDebtEl.style.color = 'var(--emerald)';
+      } else {
+        remDebtEl.textContent = this.formatMoney(remDebt) + ' ج.م';
+        remDebtEl.style.color = remDebt > 0 ? 'var(--rose)' : 'var(--emerald)';
+      }
     }
   },
 
@@ -7040,6 +7181,9 @@ const App = {
     const logItem = {
       id: receiptNo,
       date: new Date().toLocaleString('ar-EG-u-nu-latn'),
+      dateTime: new Date().toISOString(),
+      localTimestamp: new Date().toISOString(),
+      timestamp: Date.now(),
       type: type,
       sourceName: sourceName,
       receivedBy: receiver,
