@@ -226,27 +226,37 @@ const App = {
 
   sanitizeRepsData() {
     if (!this.db || !Array.isArray(this.db.reps)) return;
-    const validCustIds = new Set((this.db.customers || []).map(c => c.id));
-    const validItemIds = new Set((this.db.items || []).map(i => i.id));
+
+    // 1. Safety check: NEVER sanitize customer IDs if customers list is not loaded yet
+    const hasCustomers = Array.isArray(this.db.customers) && this.db.customers.length > 0;
+    const validCustIds = hasCustomers ? new Set(this.db.customers.map(c => String(c.id))) : null;
+
+    // 2. Safety check: NEVER sanitize active custody if items list is not loaded yet!
+    // Doing so wipes the representative's stock custody if items collection finishes loading after reps!
+    const hasItems = Array.isArray(this.db.items) && this.db.items.length > 0;
+    const itemsList = hasItems ? this.db.items : [];
 
     this.db.reps.forEach(rep => {
-      // 1. Sanitize assigned customer IDs
+      // Sanitize assigned customer IDs (only if customers are actually loaded)
       if (!Array.isArray(rep.assignedCustomerIds)) {
         rep.assignedCustomerIds = [];
-      } else {
-        rep.assignedCustomerIds = rep.assignedCustomerIds.filter(id => validCustIds.has(id));
+      } else if (validCustIds) {
+        rep.assignedCustomerIds = rep.assignedCustomerIds.filter(id => validCustIds.has(String(id)));
       }
       rep.assignedCustomersCount = rep.assignedCustomerIds.length;
-      const assignedCustomers = (this.db.customers || []).filter(c => rep.assignedCustomerIds.includes(c.id));
+      const assignedCustomers = hasCustomers ? this.db.customers.filter(c => rep.assignedCustomerIds.includes(c.id)) : [];
       rep.assignedDebts = assignedCustomers.reduce((sum, c) => sum + Number(c.currentDebt || 0), 0);
 
-      // 2. Sanitize active custody: remove items deleted from inventory or with 0 cartons
+      // Sanitize active custody: ONLY if warehouse items are actually loaded in memory!
       if (!Array.isArray(rep.activeCustody)) {
         rep.activeCustody = [];
-      } else {
+      } else if (hasItems) {
+        // Flexible matching (String ID comparison and Name matching fallback)
         rep.activeCustody = rep.activeCustody.filter(c => {
-          const itemId = c.itemId || c.id;
-          return validItemIds.has(itemId) && (Number(c.cartons) || 0) > 0;
+          const cId = String(c.itemId || c.id || '');
+          const cName = (c.itemName || c.name || '').trim();
+          const itemExists = itemsList.some(i => String(i.id) === cId || (cName && i.name && i.name.trim() === cName));
+          return itemExists && (Number(c.cartons) || 0) > 0;
         });
       }
     });
@@ -372,6 +382,8 @@ const App = {
     const u1 = window.FDB.initRealtimeSync('items', (items) => {
       if (items && Array.isArray(items)) {
         this.db.items = items;
+        this.sanitizeRepsData();
+        this.reconcileRepsStats();
         this.syncDB();
         this.showCloudSyncOverlay(false);
         this.updateCloudStatus('online', 'سحابي متصل');
@@ -427,12 +439,25 @@ const App = {
     });
     if (typeof u4 === 'function') this._unsubListeners.push(u4);
 
-    // 5. Reps Realtime Sync with Smart Merge
+    // 5. Reps Realtime Sync with Smart Merge (preserves active custody against race conditions)
     const u5 = window.FDB.initRealtimeSync('reps', (reps) => {
       if (reps && Array.isArray(reps)) {
         const incomingIds = new Set(reps.map(r => String(r.id)));
         const pendingLocal = (this.db.reps || []).filter(lr => !incomingIds.has(String(lr.id)));
-        this.db.reps = [...reps, ...pendingLocal];
+        const mergedIncoming = reps.map(incomingRep => {
+          const localRep = (this.db.reps || []).find(lr => String(lr.id) === String(incomingRep.id));
+          if (!localRep) return incomingRep;
+          const incCust = Array.isArray(incomingRep.activeCustody) ? incomingRep.activeCustody : [];
+          const locCust = Array.isArray(localRep.activeCustody) ? localRep.activeCustody : [];
+          // If incoming has active custody items, take them; if incoming is empty but local has items, preserve local
+          const activeCustody = (incCust.length > 0) ? incCust : (locCust.length > 0 ? locCust : []);
+          return {
+            ...localRep,
+            ...incomingRep,
+            activeCustody
+          };
+        });
+        this.db.reps = [...mergedIncoming, ...pendingLocal];
         this.sanitizeRepsData();
         this.reconcileRepsStats();
         this.syncDB();
@@ -3517,7 +3542,7 @@ const App = {
 
         <div style="display: flex; gap: 10px;">
           <button class="btn btn-success" style="flex: 2; padding: 12px; font-weight: 800; font-size: 1rem; display: flex; align-items: center; justify-content: center; gap: 8px;" onclick="App.saveRepSupply('${rep.id}')">
-            <span>✓</span> تأكيد استلام النقدية وتصفير عهدة المندوب
+            <span>✓</span> تأكيد استلام النقدية وإيداعها بالخزينة
           </button>
           <button class="btn btn-secondary" style="flex: 1;" onclick="App.openRepSuppliesModal('${rep.id}')">
             📋 سجل التوريدات
@@ -3687,11 +3712,16 @@ const App = {
       if (this.db.treasuryLogs && this.db.treasuryLogs[0]) {
         window.FDB.addDocument('treasury', this.db.treasuryLogs[0]);
       }
-      window.FDB.updateDocument('reps', rep.id, rep);
+      // CRITICAL FIX: Update ONLY cash and supply amounts in Firestore!
+      // This strictly protects activeCustody (cartons of cigarettes) from ever being wiped out!
+      window.FDB.updateDocument('reps', rep.id, {
+        currentCash: rep.currentCash,
+        totalSupplied: rep.totalSupplied
+      });
       window.FDB.setDocument('settings', 'capital', { capital: this.db.capital, treasury: this.db.treasury });
     }
     this.closeModal();
-    this.showToast(`تم توريد ${this.formatMoney(amount)} ج.م بنجاح إلى الخزينة وتصفير عهدة المندوب`);
+    this.showToast(`تم توريد ${this.formatMoney(amount)} ج.م بنجاح إلى الخزينة الرئيسية (بقاء بضاعة المندوب كما هي)`);
     this.renderRepsCards();
     this.renderDashboard();
     this.renderReports();
@@ -5519,7 +5549,10 @@ const App = {
       const rep = (this.db.reps || []).find(r => r.id === customer.assignedRepId);
       if (rep) {
         this.reconcileRepsStats();
-        if (window.FDB) window.FDB.updateDocument('reps', rep.id, rep);
+        if (window.FDB) window.FDB.updateDocument('reps', rep.id, {
+          assignedDebts: rep.assignedDebts,
+          assignedCustomersCount: rep.assignedCustomersCount
+        });
       }
     }
 
@@ -6959,7 +6992,7 @@ const App = {
     if (window.FDB) {
       window.FDB.deleteDocument('treasury', log.id);
       if (cust) window.FDB.updateDocument('customers', cust.id, cust);
-      if (rep) window.FDB.updateDocument('reps', rep.id, rep);
+      if (rep) window.FDB.updateDocument('reps', rep.id, { currentCash: rep.currentCash, totalSupplied: rep.totalSupplied });
       window.FDB.setDocument('settings', 'capital', { capital: this.db.capital, treasury: this.db.treasury });
     }
     this.closeModal();
@@ -7218,7 +7251,7 @@ const App = {
       if (val && val.startsWith('rep_')) {
         const repId = val.replace('rep_', '');
         const rep = (this.db.reps || []).find(r => r.id === repId);
-        if (rep) window.FDB.updateDocument('reps', rep.id, rep);
+        if (rep) window.FDB.updateDocument('reps', rep.id, { currentCash: rep.currentCash, totalSupplied: rep.totalSupplied });
       }
     }
     this.closeModal();
