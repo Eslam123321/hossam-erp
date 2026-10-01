@@ -3679,13 +3679,14 @@ const App = {
     }
 
     // Update Rep figures
-    rep.currentCash = Math.max(0, rep.currentCash - amount);
+    const prevCash = Number(rep.currentCash) || 0;
+    rep.currentCash = Math.max(0, prevCash - amount);
     rep.totalSupplied = (rep.totalSupplied || 0) + amount;
 
     // Update Main Treasury
     this.db.treasury = (Number(this.db.treasury) || 0) + amount;
 
-    // Add to Treasury logs
+    // Add to Treasury logs with representative cash tracking
     const supplyLog = {
       id: `TR-${Date.now().toString().slice(-4)}`,
       date: new Date().toLocaleString('ar-EG-u-nu-latn'),
@@ -3696,14 +3697,17 @@ const App = {
       sourceName: `${rep.name} (مندوب)`,
       receivedBy: this.db.currentUser?.name || 'حسام',
       amount: amount,
-      notes: notes
+      notes: notes,
+      repId: rep.id,
+      previousRepCash: prevCash,
+      remainingRepCash: rep.currentCash
     };
     this.db.treasuryLogs.unshift(supplyLog);
 
     // Add Notification
     this.addNotification({
       title: 'توريد نقدية من مندوب',
-      desc: `قام المندوب ${rep.name} بتوريد مبلغ ${this.formatMoney(amount)} ج.م إلى الخزينة الرئيسية`,
+      desc: `قام المندوب ${rep.name} بتوريد مبلغ ${this.formatMoney(amount)} ج.م إلى الخزينة الرئيسية (المتبقي معه: ${this.formatMoney(rep.currentCash)} ج.م)`,
       type: 'treasury'
     });
 
@@ -3721,12 +3725,13 @@ const App = {
       window.FDB.setDocument('settings', 'capital', { capital: this.db.capital, treasury: this.db.treasury });
     }
     this.closeModal();
-    this.showToast(`تم توريد ${this.formatMoney(amount)} ج.م بنجاح إلى الخزينة الرئيسية (بقاء بضاعة المندوب كما هي)`);
+    this.showToast(`تم توريد ${this.formatMoney(amount)} ج.م بنجاح إلى الخزينة الرئيسية (المتبقي مع المندوب: ${this.formatMoney(rep.currentCash)} ج.م)`);
     this.renderRepsCards();
     this.renderDashboard();
     this.renderReports();
     this.renderCurrentPage();
     this.updateLiveSidebarStats();
+    this.viewReceiptModal(supplyLog.id);
   },
 
   // Modal: تخصيص الصلاحيات والعهد للمندوب (قروصات المخزن ⮂ عهدة المندوب + تخصيص العملاء)
@@ -6625,6 +6630,42 @@ const App = {
     };
   },
 
+  getReceiptRepCashInfo(log) {
+    if (!log) return null;
+    const isRepSupply = (log.type && (log.type.includes('مندوب') || log.type === 'توريد نقدية مندوب' || log.type === 'توريد نقدية')) ||
+                        (log.sourceName && log.sourceName.includes('(مندوب)'));
+    if (!isRepSupply) return null;
+
+    let rep = null;
+    if (log.repId) {
+      rep = (this.db.reps || []).find(r => r.id === log.repId);
+    }
+    if (!rep && log.sourceName) {
+      const cleanSource = log.sourceName.replace('(مندوب)', '').trim();
+      rep = (this.db.reps || []).find(r => r.name === cleanSource || log.sourceName.includes(r.name));
+    }
+
+    let remainingCash = 0;
+    if (log.remainingRepCash !== undefined && log.remainingRepCash !== null) {
+      remainingCash = Math.max(0, Number(log.remainingRepCash) || 0);
+    } else if (rep) {
+      remainingCash = Math.max(0, Number(rep.currentCash) || 0);
+    }
+
+    let previousCash = 0;
+    if (log.previousRepCash !== undefined && log.previousRepCash !== null) {
+      previousCash = Math.max(0, Number(log.previousRepCash) || 0);
+    } else {
+      previousCash = remainingCash + (Number(log.amount) || 0);
+    }
+
+    return {
+      rep,
+      previousCash,
+      remainingCash
+    };
+  },
+
   getReceiptCustomerPhone(log) {
     let phone = '';
     let customer = null;
@@ -6665,6 +6706,7 @@ const App = {
 
     const arabicWords = this.numberToArabicWords(log.amount);
     const debtInfo = this.getReceiptDebtInfo(log);
+    const repCashInfo = !debtInfo ? this.getReceiptRepCashInfo(log) : null;
     const isRep = this.isCurrentUserRep();
 
     const modalHtml = `
@@ -6739,7 +6781,23 @@ const App = {
               </div>
             </div>
           </div>
-          ` : ''}
+          ` : (repCashInfo ? `
+          <!-- Rep Cash Summary Box -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0 16px 0;">
+            <div style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px 12px; text-align: center;">
+              <div style="font-size: 0.78rem; color: #64748b; font-weight: bold;">النقدية قبل التوريد</div>
+              <div style="font-size: 1.1rem; font-weight: 800; color: #475569; font-family: 'JetBrains Mono', monospace; margin-top: 2px;">
+                ${this.formatMoney(repCashInfo.previousCash)} ج.م
+              </div>
+            </div>
+            <div style="background: rgba(2, 132, 199, 0.08); border: 1.5px solid #0284c7; border-radius: 8px; padding: 10px 12px; text-align: center;">
+              <div style="font-size: 0.82rem; color: #0369a1; font-weight: 800;">متبقي من النقدية مع المندوب</div>
+              <div style="font-size: 1.3rem; font-weight: 900; color: #0284c7; font-family: 'JetBrains Mono', monospace; margin-top: 2px;">
+                ${this.formatMoney(repCashInfo.remainingCash)} ج.م
+              </div>
+            </div>
+          </div>
+          ` : '')}
 
           <!-- Notes -->
           <div style="margin-bottom: 20px; font-size: 0.9rem;">
@@ -7199,8 +7257,14 @@ const App = {
         const rep = (this.db.reps || []).find(r => r.id === repId);
         if (rep) {
           sourceName = `${rep.name} (مندوب)`;
-          rep.currentCash = Math.max(0, (rep.currentCash || 0) - amount);
+          const prevCash = Number(rep.currentCash) || 0;
+          rep.currentCash = Math.max(0, prevCash - amount);
           rep.totalSupplied = (rep.totalSupplied || 0) + amount;
+          previousDebt = prevCash;
+          remainingDebt = rep.currentCash;
+          logItem.repId = rep.id;
+          logItem.previousRepCash = prevCash;
+          logItem.remainingRepCash = rep.currentCash;
         }
       }
     } else {
@@ -7268,12 +7332,14 @@ const App = {
 
     const debtInfo = this.getReceiptDebtInfo(log);
     const hasDebt = !!debtInfo;
+    const repCashInfo = !hasDebt ? this.getReceiptRepCashInfo(log) : null;
+    const hasRepCash = !!repCashInfo;
 
     const arabicWords = this.numberToArabicWords(log.amount);
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     const width = 580;
-    const height = hasDebt ? 600 : 520;
+    const height = (hasDebt || hasRepCash) ? 600 : 520;
 
     canvas.width = width;
     canvas.height = height;
@@ -7379,7 +7445,7 @@ const App = {
     ctx.font = 'bold 12px Cairo, sans-serif';
     ctx.fillText(`فقط ${arabicWords} جنيه مصري لا غير`, width / 2, currentY + 48);
 
-    // Debt Info Box (Previous & Remaining Debt)
+    // Debt Info Box or Rep Cash Box
     if (hasDebt) {
       currentY += 68;
       const boxW = (width - 80) / 2;
@@ -7417,6 +7483,45 @@ const App = {
       ctx.fillStyle = '#dc2626';
       ctx.font = 'bold 16px "JetBrains Mono", monospace';
       ctx.fillText(`${this.formatMoney(debtInfo.remainingDebt)} ج.م`, remX + boxW / 2, currentY + 40);
+
+      currentY += 60;
+    } else if (hasRepCash) {
+      currentY += 68;
+      const boxW = (width - 80) / 2;
+
+      // Previous Cash
+      const prevX = 35;
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(prevX, currentY, boxW, 52);
+      ctx.strokeStyle = '#cbd5e1';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(prevX, currentY, boxW, 52);
+
+      ctx.fillStyle = '#64748b';
+      ctx.font = 'bold 11px Cairo, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('النقدية قبل التوريد', prevX + boxW / 2, currentY + 19);
+
+      ctx.fillStyle = '#334155';
+      ctx.font = 'bold 14px "JetBrains Mono", monospace';
+      ctx.fillText(`${this.formatMoney(repCashInfo.previousCash)} ج.م`, prevX + boxW / 2, currentY + 39);
+
+      // Remaining Cash with Rep (Prominent Blue)
+      const remX = 35 + boxW + 10;
+      ctx.fillStyle = '#f0f9ff';
+      ctx.fillRect(remX, currentY, boxW, 52);
+      ctx.strokeStyle = '#0284c7';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(remX, currentY, boxW, 52);
+
+      ctx.fillStyle = '#0369a1';
+      ctx.font = 'bold 12px Cairo, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('متبقي من النقدية مع المندوب', remX + boxW / 2, currentY + 19);
+
+      ctx.fillStyle = '#0284c7';
+      ctx.font = 'bold 16px "JetBrains Mono", monospace';
+      ctx.fillText(`${this.formatMoney(repCashInfo.remainingCash)} ج.م`, remX + boxW / 2, currentY + 40);
 
       currentY += 60;
     } else {
