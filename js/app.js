@@ -121,35 +121,65 @@ const App = {
     this.showToast('تمت المزامنة وتحديث البيانات من السحابة بنجاح ✓');
   },
 
-  init() {
+  async init() {
     this.db = window.ERP_DB;
-    if (window.FDB && typeof window.FDB.ensureAuth === 'function') {
-      window.FDB.ensureAuth().catch(() => {});
+    this.bindEvents();
+    this.setupClock();
+
+    // Show initial cloud sync overlay immediately so no old data is shown
+    this.showCloudSyncOverlay(true);
+    this.updateCloudStatus('syncing', 'جاري جلب أحدث البيانات...');
+
+    // 1. Authenticate with Firebase first and pull the latest documents directly from Firestore
+    let cloudSynced = false;
+    if (window.FDB) {
+      try {
+        if (typeof window.FDB.ensureAuth === 'function') {
+          await Promise.race([
+            window.FDB.ensureAuth(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Auth Timeout')), 5000))
+          ]).catch(e => console.warn('Auth handshake notice:', e));
+        }
+
+        cloudSynced = await Promise.race([
+          this.pullAllFromFirestore(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Pull Timeout')), 6000))
+        ]).catch(e => {
+          console.warn('Initial cloud pull timeout/fallback:', e);
+          return false;
+        });
+      } catch (err) {
+        console.warn('Initial cloud sync error:', err);
+      }
     }
+
+    // 2. Perform all local reconciliations on the fresh data
     this.sanitizeRepsData();
     this.sanitizeUsersList();
     this.reconcilePastRepInvoicesStock();
     this.reconcileCustomerBalances();
     this.reconcileRepsStats();
-    this.bindEvents();
-    this.setupClock();
-    this.startListeners();
 
-    // If local cache has 0 items and 0 invoices (new device or fresh browser), show overlay and pull immediately
-    const isColdDevice = (!this.db.items || this.db.items.length === 0) && (!this.db.invoices || this.db.invoices.length === 0);
-    if (isColdDevice) {
-      this.showCloudSyncOverlay(true);
-      this.pullAllFromFirestore().finally(() => {
-        setTimeout(() => this.showCloudSyncOverlay(false), 400);
-      });
-    }
-
+    // 3. Render authenticated UI or show login modal
     if (!this.db || !this.db.currentUser) {
       this.lockAppForLogin();
       this.openLoginModal(true);
     } else {
       this.unlockAppAfterLogin();
     }
+
+    // 4. Smoothly hide cloud sync overlay
+    setTimeout(() => {
+      this.showCloudSyncOverlay(false);
+      if (cloudSynced) {
+        this.updateCloudStatus('online', 'سحابي متصل ✓');
+      } else {
+        this.updateCloudStatus('online', 'سحابي متصل');
+      }
+    }, 250);
+
+    // 5. Start real-time Firestore listeners for ongoing updates
+    this.startListeners();
   },
 
   lockAppForLogin() {
@@ -209,8 +239,12 @@ const App = {
       this.renderDashboard();
     } else if (this.activePage === 'inventory' && typeof this.renderInventory === 'function') {
       this.renderInventory();
-    } else if (this.activePage === 'pos' && typeof this.renderPOSCatalog === 'function') {
-      this.renderPOSCatalog();
+    } else if (this.activePage === 'pos') {
+      if (typeof this.renderPOS === 'function') {
+        this.renderPOS();
+      } else if (typeof this.renderPOSCatalog === 'function') {
+        this.renderPOSCatalog();
+      }
     } else if (this.activePage === 'customers' && typeof this.renderCustomers === 'function') {
       this.renderCustomers();
     } else if (this.activePage === 'reps' && typeof this.renderRepsCards === 'function') {
@@ -308,7 +342,7 @@ const App = {
       // 2. Total Supplied dynamically calculated from actual treasury logs
       const repSupplies = treasuryLogs.filter(log => 
         (log.type === 'توريد نقدية مندوب' || log.type === 'توريد نقدية') && 
-        log.sourceName && log.sourceName.includes(rep.name)
+        (log.repId ? String(log.repId) === String(rep.id) : ((log.sourceName || '').replace(/^مندوب:\s*/, '').trim() === rep.name.trim()))
       );
       rep.totalSupplied = repSupplies.reduce((sum, log) => sum + (Number(log.amount) || 0), 0);
 
@@ -331,11 +365,15 @@ const App = {
     const treasuryLogs = this.db.treasuryLogs || [];
 
     this.db.customers.forEach(cust => {
-      const custInvoices = invoices.filter(i => i.customerId === cust.id || i.customerName === cust.name);
-      const custReceipts = treasuryLogs.filter(t => 
-        (t.customerId === cust.id || (t.sourceName && t.sourceName.includes(cust.name))) &&
-        (t.type && (t.type.includes('سند قبض') || t.type.includes('تحصيل')))
+      const custInvoices = invoices.filter(i => 
+        i.customerId ? String(i.customerId) === String(cust.id) : (i.customerName && i.customerName.trim() === cust.name.trim())
       );
+      const custReceipts = treasuryLogs.filter(t => {
+        if (!t.type || (!t.type.includes('سند قبض') && !t.type.includes('تحصيل'))) return false;
+        if (t.customerId) return String(t.customerId) === String(cust.id);
+        const cleanSource = (t.sourceName || '').split('(')[0].replace(/^عميل:\s*/, '').trim();
+        return cleanSource === cust.name.trim();
+      });
 
       const totalPurchasesFromInvoices = custInvoices.reduce((sum, i) => sum + (Number(i.grandTotal || i.total) || 0), 0);
       const totalPaidFromInvoices = custInvoices.reduce((sum, i) => sum + (Number(i.paidAmount) || 0), 0);
@@ -2614,26 +2652,49 @@ const App = {
       inv = (this.db.invoices || []).find(i => i.id === invInput);
       if (!inv) {
         // Fallback to active cart
-        const customer = this.db.customers.find(c => c.id === this.currentCart.customerId);
+        const customer = (this.db.customers || []).find(c => c.id === this.currentCart.customerId || String(c.id) === String(this.currentCart.customerId));
         const subtotal = this.currentCart.items.reduce((sum, i) => sum + i.total, 0);
+        const grossTotal = this.currentCart.items.reduce((sum, i) => sum + (Number(i.qty) * Number(i.price)), 0);
+        const totalItemDiscounts = this.currentCart.items.reduce((sum, i) => sum + (Number(i.discount) || 0), 0);
         const discount = this.currentCart.discount || 0;
         const grandTotal = Math.max(0, subtotal - discount);
-        const paid = this.currentCart.paidAmount !== undefined ? this.currentCart.paidAmount : 0;
+        const paidInput = document.getElementById('cart-paid-input');
+        let paid;
+        if (paidInput && paidInput.value !== '') {
+          paid = Number(paidInput.value);
+        } else if (this.currentCart.paidAmount !== undefined && this.currentCart.paidAmount !== null) {
+          paid = Number(this.currentCart.paidAmount);
+        } else {
+          paid = 0;
+        }
+        if (isNaN(paid)) paid = 0;
+        const remaining = Math.max(0, grandTotal - paid);
+        const prevDebt = customer ? Number(customer.currentDebt || 0) : 0;
+        const paidFromOldDebt = (paid > grandTotal && prevDebt > 0) ? Math.min(prevDebt, paid - grandTotal) : 0;
+        const paidForInvoice = (paid > grandTotal) ? grandTotal : paid;
+        const finalDebt = Math.max(0, prevDebt + remaining - paidFromOldDebt);
+        const nowFormatted = this.formatDateTime(new Date());
+
         inv = {
           id: invInput,
-          date: this.formatDateTime(new Date()).dateOnly,
-          dateTime: this.formatDateTime(new Date()).full,
+          date: nowFormatted.dateOnly,
+          dateTime: nowFormatted.full,
           customerId: customer ? customer.id : null,
           customerName: customer ? customer.name : '',
           customerPhone: customer ? customer.phone : '',
-          previousDebt: customer ? Number(customer.currentDebt || 0) : 0,
+          previousDebt: prevDebt,
+          paidFromOldDebt: paidFromOldDebt,
+          paidForInvoice: paidForInvoice,
+          finalDebt: finalDebt,
           sellerName: this.activeRepForPOS ? this.activeRepForPOS.name : (this.db.currentUser?.name || 'حسام حسني'),
           items: this.currentCart.items,
+          grossTotal: grossTotal,
+          totalItemDiscounts: totalItemDiscounts,
           subTotal: subtotal,
           discount: discount,
           grandTotal: grandTotal,
           paidAmount: paid,
-          remainingAmount: Math.max(0, grandTotal - paid)
+          remainingAmount: remaining
         };
       }
     }
@@ -2648,11 +2709,11 @@ const App = {
     const paid = Number(inv.paidAmount || 0);
     const remaining = Number(inv.remainingAmount !== undefined ? inv.remainingAmount : Math.max(0, grandTotal - paid));
 
-    const customer = inv.customerId ? (this.db.customers || []).find(c => c.id === inv.customerId) : null;
-    const prevDebt = inv.previousDebt !== undefined ? Number(inv.previousDebt) : (customer ? Number(customer.currentDebt || 0) : 0);
+    const customer = inv.customerId ? (this.db.customers || []).find(c => String(c.id) === String(inv.customerId)) : null;
+    const prevDebt = (inv.previousDebt !== undefined && inv.previousDebt !== null) ? Number(inv.previousDebt) : (customer ? Number(customer.currentDebt || 0) : 0);
     const paidFromOldDebt = Number(inv.paidFromOldDebt || 0);
-    const finalDebt = inv.finalDebt !== undefined ? Number(inv.finalDebt) : Math.max(0, prevDebt + remaining - paidFromOldDebt);
-    const paymentMethodText = remaining > 0 ? (paid > 0 ? 'دفعة جزئية' : 'آجل بالكامل') : 'كاش مسدد بالكامل';
+    const finalDebt = (inv.finalDebt !== undefined && inv.finalDebt !== null) ? Number(inv.finalDebt) : Math.max(0, prevDebt + remaining - paidFromOldDebt);
+    const paymentMethodText = remaining > 0 ? (paid > 0 ? 'دفعة جزئية' : 'آجل بالكامل') : (paidFromOldDebt > 0 ? 'مسدد بالكامل + سداد دين' : 'كاش مسدد بالكامل');
     const paymentColor = remaining > 0 ? (paid > 0 ? '#d97706' : '#dc2626') : '#16a34a';
 
     const canvas = document.createElement('canvas');
@@ -2723,7 +2784,7 @@ const App = {
     ctx.font = '12px Cairo, sans-serif';
     ctx.fillText('التاريخ والوقت:', 245, 122);
 
-    const dtObj = this.formatDateTime(inv.dateTime || inv.date || new Date());
+    const dtObj = this.formatDateTime(inv.dateTime || inv.localTimestamp || inv.date || new Date());
     ctx.save();
     ctx.direction = 'ltr';
     ctx.textAlign = 'right';
@@ -2916,7 +2977,7 @@ const App = {
 
   // إرسال صورة الفاتورة عبر واتساب من نقطة البيع الحالية
   shareCurrentPOSInvoiceWhatsApp(invoiceNo) {
-    const customer = this.db.customers.find(c => c.id === this.currentCart.customerId);
+    const customer = (this.db.customers || []).find(c => c.id === this.currentCart.customerId || String(c.id) === String(this.currentCart.customerId));
     const custName = customer ? customer.name : 'عميل نقدي عام';
     const custPhone = customer ? customer.phone : '';
     const seller = this.activeRepForPOS ? this.activeRepForPOS.name : (this.db.currentUser?.name || 'حسام');
@@ -2925,16 +2986,40 @@ const App = {
     const subtotal = this.currentCart.items.reduce((sum, i) => sum + i.total, 0);
     const discount = this.currentCart.discount || 0;
     const grandTotal = Math.max(0, subtotal - discount);
-    const paid = this.currentCart.paidAmount !== undefined ? this.currentCart.paidAmount : grandTotal;
+
+    const paidInput = document.getElementById('cart-paid-input');
+    let paid;
+    if (paidInput && paidInput.value !== '') {
+      paid = Number(paidInput.value);
+    } else if (this.currentCart.paidAmount !== undefined && this.currentCart.paidAmount !== null) {
+      paid = Number(this.currentCart.paidAmount);
+    } else {
+      paid = 0;
+    }
+    if (isNaN(paid)) paid = 0;
+
     const remaining = Math.max(0, grandTotal - paid);
+    const prevDebt = Number(customer?.currentDebt || 0);
+    const paidFromOldDebt = (paid > grandTotal && prevDebt > 0) ? Math.min(prevDebt, paid - grandTotal) : 0;
+    const paidForInvoice = (paid > grandTotal) ? grandTotal : paid;
+    const finalDebt = Math.max(0, prevDebt + remaining - paidFromOldDebt);
+    const paymentMethodText = remaining > 0 ? (paid > 0 ? 'دفعة جزئية' : 'آجل بالكامل') : (paidFromOldDebt > 0 ? 'مسدد بالكامل + سداد دين' : 'كاش مسدد بالكامل');
+    const nowFormatted = this.formatDateTime(new Date());
 
     const invObj = {
       id: invoiceNo,
-      date: new Date().toLocaleDateString('ar-EG-u-nu-latn'),
+      date: nowFormatted.dateOnly,
+      dateTime: nowFormatted.full,
+      customerId: customer ? customer.id : null,
       customerName: custName,
       customerPhone: custPhone,
+      previousDebt: prevDebt,
+      paidFromOldDebt: paidFromOldDebt,
+      paidForInvoice: paidForInvoice,
+      finalDebt: finalDebt,
+      paymentMethodText: paymentMethodText,
       sellerName: seller,
-      items: this.currentCart.items,
+      items: JSON.parse(JSON.stringify(this.currentCart.items)),
       grossTotal: grossTotal,
       totalItemDiscounts: totalItemDiscounts,
       subTotal: subtotal,
@@ -3177,8 +3262,12 @@ const App = {
         this.db.treasuryLogs.unshift({
           id: `TR-${Date.now().toString().slice(-4)}`,
           date: nowStr,
+          dateTime: nowDt.full,
           type: 'مبيعات نقدية (فاتورة)',
           sourceName: `${custName} (فاتورة #${invoiceNo})`,
+          customerId: customer.id,
+          customerName: custName,
+          invoiceId: invoiceNo,
           receivedBy: sellerName,
           amount: paid,
           notes: paidFromOldDebt > 0 ? `تحصيل من الفاتورة #${invoiceNo} (${this.formatMoney(paidForInvoice)} ج.م) + سداد دين سابق (${this.formatMoney(paidFromOldDebt)} ج.م)` : `تحصيل نقدي من الفاتورة رقم ${invoiceNo}`
@@ -3563,7 +3652,9 @@ const App = {
 
     const isRep = this.isCurrentUserRep();
     // Filter supplies for this rep
-    const supplies = this.db.treasuryLogs.filter(log => log.sourceName.includes(rep.name));
+    const supplies = (this.db.treasuryLogs || []).filter(log => 
+      log.repId ? String(log.repId) === String(rep.id) : ((log.sourceName || '').replace(/^مندوب:\s*/, '').trim() === rep.name.trim())
+    );
 
     const supplyActionHtml = isRep ? '' : `
         <div style="border-top: 1px solid var(--border-color); padding-top: 14px; margin-bottom: 14px;">
@@ -5379,9 +5470,15 @@ const App = {
     const isRep = this.isCurrentUserRep();
 
     // Customer Invoices
-    const invoices = this.db.invoices.filter(i => i.customerId === customer.id);
+    const invoices = (this.db.invoices || []).filter(i => 
+      i.customerId ? String(i.customerId) === String(customer.id) : (i.customerName && i.customerName.trim() === customer.name.trim())
+    );
     // Customer Receipts
-    const receipts = this.db.treasuryLogs.filter(t => t.sourceName.includes(customer.name));
+    const receipts = (this.db.treasuryLogs || []).filter(t => {
+      if (t.customerId) return String(t.customerId) === String(customer.id);
+      const cleanSource = (t.sourceName || '').split('(')[0].replace(/^عميل:\s*/, '').trim();
+      return cleanSource === customer.name.trim();
+    });
 
     const modalHtml = `
       <div class="modal-header">
@@ -5533,11 +5630,15 @@ const App = {
 
     const newDebt = this.parseNumber(document.getElementById('edit-cust-debt').value, 0);
 
-    const invoices = (this.db.invoices || []).filter(i => i.customerId === customer.id || i.customerName === customer.name);
-    const treasuryLogs = (this.db.treasuryLogs || []).filter(t => 
-      (t.customerId === customer.id || (t.sourceName && t.sourceName.includes(customer.name))) &&
-      (t.type && (t.type.includes('سند قبض') || t.type.includes('تحصيل')))
+    const invoices = (this.db.invoices || []).filter(i => 
+      i.customerId ? String(i.customerId) === String(customer.id) : (i.customerName && i.customerName.trim() === customer.name.trim())
     );
+    const treasuryLogs = (this.db.treasuryLogs || []).filter(t => {
+      if (!t.type || (!t.type.includes('سند قبض') && !t.type.includes('تحصيل'))) return false;
+      if (t.customerId) return String(t.customerId) === String(customer.id);
+      const cleanSource = (t.sourceName || '').split('(')[0].replace(/^عميل:\s*/, '').trim();
+      return cleanSource === customer.name.trim();
+    });
 
     const invPurchases = invoices.reduce((sum, i) => sum + (Number(i.grandTotal || i.total) || 0), 0);
     const invPaid = invoices.reduce((sum, i) => sum + (Number(i.paidAmount) || 0), 0);
@@ -5837,14 +5938,14 @@ const App = {
     const paid = Number(inv.paidAmount || 0);
     const remaining = Number(inv.remainingAmount !== undefined ? inv.remainingAmount : Math.max(0, grandTotal - paid));
 
-    const customer = inv.customerId ? (this.db.customers || []).find(c => c.id === inv.customerId) : null;
-    const prevDebt = inv.previousDebt !== undefined ? Number(inv.previousDebt) : (customer ? Number(customer.currentDebt || 0) : 0);
+    const customer = inv.customerId ? (this.db.customers || []).find(c => String(c.id) === String(inv.customerId)) : null;
+    const prevDebt = (inv.previousDebt !== undefined && inv.previousDebt !== null) ? Number(inv.previousDebt) : (customer ? Number(customer.currentDebt || 0) : 0);
     const paidFromOldDebt = Number(inv.paidFromOldDebt || 0);
     const paidForInvoice = inv.paidForInvoice || (paid - paidFromOldDebt);
-    const finalDebt = inv.finalDebt !== undefined ? Number(inv.finalDebt) : Math.max(0, prevDebt + remaining - paidFromOldDebt);
-    const paymentMethodText = remaining > 0 ? (paid > 0 ? 'دفعة جزئية' : 'آجل بالكامل') : 'كاش مسدد بالكامل';
+    const finalDebt = (inv.finalDebt !== undefined && inv.finalDebt !== null) ? Number(inv.finalDebt) : Math.max(0, prevDebt + remaining - paidFromOldDebt);
+    const paymentMethodText = remaining > 0 ? (paid > 0 ? 'دفعة جزئية' : 'آجل بالكامل') : (paidFromOldDebt > 0 ? 'مسدد بالكامل + سداد دين' : 'كاش مسدد بالكامل');
     const paymentStatusColor = remaining > 0 ? (paid > 0 ? '#d97706' : '#dc2626') : '#16a34a';
-    const dateTimeStr = this.formatDateTime(inv.dateTime || inv.date || new Date()).full;
+    const dateTimeStr = this.formatDateTime(inv.dateTime || inv.localTimestamp || inv.date || new Date()).full;
     const seller = inv.sellerName || (this.db.currentUser?.name || 'حسام حسني');
 
     const receiptHtml = this.renderInvoiceReceiptHTML({
@@ -5957,7 +6058,7 @@ const App = {
           </div>
           <div class="form-group">
             <label class="form-label">تاريخ وتوقيت الفاتورة *</label>
-            <input type="text" id="edit-inv-date" class="form-control" value="${inv.date}">
+            <input type="text" id="edit-inv-date" class="form-control" value="${inv.dateTime || inv.date}">
           </div>
         </div>
 
@@ -6337,7 +6438,10 @@ const App = {
     }
 
     // 3. Update Invoice Object
-    inv.date = newDate;
+    const inputDateVal = document.getElementById('edit-inv-date')?.value.trim() || inv.dateTime || inv.date;
+    const formattedDate = this.formatDateTime(inputDateVal);
+    inv.date = formattedDate.dateOnly;
+    inv.dateTime = formattedDate.full;
     inv.customerId = newCustId || null;
     inv.customerName = newCustName;
     inv.customerPhone = newPhone;
@@ -6594,11 +6698,10 @@ const App = {
       customer = (this.db.customers || []).find(c => c.id === log.customerId);
     }
     if (!customer && log.sourceName) {
-      const cleanSource = log.sourceName.split('(')[0].trim();
+      const cleanSource = log.sourceName.split('(')[0].replace(/^عميل:\s*/, '').trim();
       customer = (this.db.customers || []).find(c => 
-        c.name === log.sourceName || 
-        c.name.includes(cleanSource) || 
-        log.sourceName.includes(c.name)
+        c.name.trim() === log.sourceName.trim() || 
+        c.name.trim() === cleanSource
       );
     }
 
@@ -6680,11 +6783,10 @@ const App = {
     }
 
     if (!phone && log.sourceName) {
-      const cleanSource = log.sourceName.split('(')[0].trim();
+      const cleanSource = log.sourceName.split('(')[0].replace(/^عميل:\s*/, '').trim();
       customer = (this.db.customers || []).find(c => 
-        c.name === log.sourceName || 
-        c.name.includes(cleanSource) || 
-        log.sourceName.includes(c.name)
+        c.name.trim() === log.sourceName.trim() || 
+        c.name.trim() === cleanSource
       );
       if (customer && customer.phone) phone = customer.phone;
     }
@@ -6949,14 +7051,26 @@ const App = {
     this.db.treasury = Math.max(0, (this.db.treasury || 0) + diff);
 
     // 2. Adjust Customer (if was/is customer receipt)
-    const cust = (this.db.customers || []).find(c => log.sourceName.includes(c.name) || newSource.includes(c.name));
+    let cust = null;
+    if (log.customerId) cust = (this.db.customers || []).find(c => String(c.id) === String(log.customerId));
+    if (!cust) {
+      const oldClean = (log.sourceName || '').split('(')[0].replace(/^عميل:\s*/, '').trim();
+      const newClean = (newSource || '').split('(')[0].replace(/^عميل:\s*/, '').trim();
+      cust = (this.db.customers || []).find(c => c.name.trim() === oldClean || c.name.trim() === newClean);
+    }
     if (cust) {
       cust.totalPaid = Math.max(0, (cust.totalPaid || 0) + diff);
       cust.currentDebt = Math.max(0, (cust.currentDebt || 0) - diff);
     }
 
     // 3. Adjust Rep (if was/is rep supply)
-    const rep = (this.db.reps || []).find(r => log.sourceName.includes(r.name) || newSource.includes(r.name));
+    let rep = null;
+    if (log.repId) rep = (this.db.reps || []).find(r => String(r.id) === String(log.repId));
+    if (!rep) {
+      const oldClean = (log.sourceName || '').split('(')[0].replace(/^مندوب:\s*/, '').trim();
+      const newClean = (newSource || '').split('(')[0].replace(/^مندوب:\s*/, '').trim();
+      rep = (this.db.reps || []).find(r => r.name.trim() === oldClean || r.name.trim() === newClean);
+    }
     if (rep) {
       rep.totalSupplied = Math.max(0, (rep.totalSupplied || 0) + diff);
       rep.currentCash = Math.max(0, (rep.currentCash || 0) - diff);
@@ -7023,14 +7137,24 @@ const App = {
     this.db.treasury = Math.max(0, (this.db.treasury || 0) - log.amount);
 
     // 2. Revert Customer (re-add debt)
-    const cust = (this.db.customers || []).find(c => log.sourceName.includes(c.name));
+    let cust = null;
+    if (log.customerId) cust = (this.db.customers || []).find(c => String(c.id) === String(log.customerId));
+    if (!cust) {
+      const cleanSource = (log.sourceName || '').split('(')[0].replace(/^عميل:\s*/, '').trim();
+      cust = (this.db.customers || []).find(c => c.name.trim() === cleanSource);
+    }
     if (cust) {
       cust.totalPaid = Math.max(0, (cust.totalPaid || 0) - log.amount);
       cust.currentDebt = (cust.currentDebt || 0) + log.amount;
     }
 
     // 3. Revert Rep (restore cash)
-    const rep = (this.db.reps || []).find(r => log.sourceName.includes(r.name));
+    let rep = null;
+    if (log.repId) rep = (this.db.reps || []).find(r => String(r.id) === String(log.repId));
+    if (!rep) {
+      const cleanSource = (log.sourceName || '').split('(')[0].replace(/^مندوب:\s*/, '').trim();
+      rep = (this.db.reps || []).find(r => r.name.trim() === cleanSource);
+    }
     if (rep) {
       rep.totalSupplied = Math.max(0, (rep.totalSupplied || 0) - log.amount);
       rep.currentCash = (rep.currentCash || 0) + log.amount;
